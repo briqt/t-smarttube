@@ -71,3 +71,13 @@ tmp/
 fabric.properties
 *BAK.java
 hs_err_pid*.log
+
+# Local workspace files
+/.doc/
+/AGENTS.md
+/CLAUDE.md
+
+# Signing material
+*.jks
+*.keystore
+/keystore.properties
