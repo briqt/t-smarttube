@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="caption_ai_channel">当前频道启用 AI 字幕</string>
+    <string name="caption_ai_details">AI 字幕详情</string>
+    <string name="caption_ai_target">目标语言（全局，例如 en 或 zh-Hans）</string>
+    <string name="caption_ai_not_set">未配置</string>
+    <string name="caption_ai_display">字幕显示方式（全局）</string>
+    <string name="caption_ai_original_first">双语：原文在上</string>
+    <string name="caption_ai_translation_first">双语：译文在上</string>
+    <string name="caption_ai_translation_only">仅译文</string>
+    <string name="caption_ai_connection">模型连接（全局）</string>
+    <string name="caption_ai_endpoint">完整的 HTTPS chat/completions 地址</string>
+    <string name="caption_ai_model">模型 ID</string>
+    <string name="caption_ai_key_hint">新 API Key（留空则保留已保存密钥）</string>
+    <string name="caption_ai_output_tokens">最大输出 token 数</string>
+    <string name="caption_ai_deepseek_thinking">关闭思考（仅适用于支持的 DeepSeek 模型）</string>
+    <string name="caption_ai_connection_notice">保存不会测试服务。启用频道翻译后，会向此地址发送字幕，可能产生费用。修改地址需要重新输入密钥或明确清除密钥。</string>
+    <string name="caption_ai_clear_key">清除已保存密钥</string>
+    <string name="caption_ai_clear_key_confirm">清除此用户配置的密钥？连接参数仍会保留，但没有密钥就不能发送新的翻译请求。</string>
+    <string name="caption_ai_invalid_connection">请检查 HTTPS 地址、模型、token 上限和密钥。密钥不能含空格或换行。</string>
+    <string name="caption_ai_invalid_language">请输入语言代码，例如 en、fr 或 zh-Hans。</string>
+    <string name="caption_ai_loading">正在读取字幕设置…</string>
+    <string name="caption_ai_saving">正在保存…</string>
+    <string name="caption_ai_saved">设置已保存</string>
+    <string name="caption_ai_editor_expired">此设置页面已失效，本次输入未提交。请关闭后重新打开 AI 字幕详情。</string>
+    <string name="caption_ai_key_missing">未保存密钥，不会发送翻译请求。</string>
+    <string name="caption_ai_save_failed">尚未确认保存成功，请检查内容后重试。</string>
+    <string name="caption_ai_pending_channel">正在等待频道信息，当前选择随后会自动保存。</string>
+    <string name="caption_ai_scope_hint">显示和连接是全局设置，翻译开关和字幕选择按频道保存。</string>
+    <string name="caption_ai_not_configured">请配置目标语言和模型连接，原生字幕继续正常显示。</string>
+    <string name="caption_ai_key_saved">密钥已通过 Android Keystore 加密保存</string>
+    <string name="caption_ai_key_memory">安全密钥存储不可用，密钥仅保存在进程内；重启应用后需重新输入。</string>
+    <string name="caption_ai_retry">重试保存待处理的设置</string>
+    <string name="caption_pairing_title">手机配置连接</string>
+    <string name="caption_pairing_notice">请用同一可信家庭网络内的手机扫码。本地 HTTP 链路不加密。配对码五分钟后过期，关闭此窗口即停止配对。保存不会测试模型服务；关闭时，已经开始的写入仍可能完成。</string>
+    <string name="caption_pairing_code">临时手机配对码</string>
+    <string name="caption_pairing_start">显示配对码</string>
+    <string name="caption_pairing_choose_network">请选择手机可访问的 Wi-Fi 或以太网地址。</string>
+    <string name="caption_pairing_address">当前局域网地址：%1$s</string>
+    <string name="caption_pairing_no_network">未找到可用的 Wi-Fi 或以太网私网地址。请检查网络与应用权限后重新打开。不能使用 VPN、蜂窝网络或隔离的访客网络；仍可使用原生连接表单。</string>
+    <string name="caption_pairing_unavailable">手机配对未能启动，请重新打开此窗口或使用原生连接表单。</string>
+</resources>

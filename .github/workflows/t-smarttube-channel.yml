@@ -1,0 +1,170 @@
+name: t-SmartTube release channel
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        type: string
+        required: true
+      controller_sha:
+        type: string
+        required: true
+      plans_artifact_id:
+        type: string
+        required: true
+      allow_publish:
+        type: boolean
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.repository == 'briqt/t-smarttube' && github.ref == 'refs/heads/master' && (inputs.channel == 'stable' || inputs.channel == 'beta')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs.controller_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ inputs.plans_artifact_id }}
+          path: ${{ runner.temp }}/plans
+          merge-multiple: true
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: gradle
+      - name: Install upstream Android build components
+        run: sdkmanager 'platforms;android-34' 'build-tools;30.0.3' 'ndk;21.0.6113669'
+      - name: Apply the same enhancement to the selected upstream snapshot
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          python3 -I tools/release/integration.py prepare \
+            --lock "$RUNNER_TEMP/plans/$CHANNEL-source.json" \
+            --delta-dir "$RUNNER_TEMP/plans/delta" \
+            --output-dir "$RUNNER_TEMP/candidate/src" > "$RUNNER_TEMP/integration.json"
+      - name: Lint, build, and run the subtitle and native preference regression
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          python3 -I tools/release/pipeline.py build --root "$RUNNER_TEMP/candidate/src" \
+            --plan "$RUNNER_TEMP/plans/$CHANNEL-plan.json" \
+            --integration-receipt "$RUNNER_TEMP/integration.json" \
+            --output-dir "$RUNNER_TEMP/result"
+      - name: Keep unsigned APKs and their validation evidence
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-${{ inputs.channel }}
+          path: ${{ runner.temp }}/result/unsigned/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve validation failure logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: failure-${{ inputs.channel }}
+          path: |
+            ${{ runner.temp }}/result/gradle.log
+            ${{ runner.temp }}/candidate/src/**/build/reports/
+            ${{ runner.temp }}/candidate/src/**/build/test-results/
+          if-no-files-found: warn
+
+  sign:
+    needs: build
+    if: inputs.allow_publish && vars.TSMARTTUBE_RELEASES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release-signing
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs.controller_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ inputs.plans_artifact_id }}
+          path: ${{ runner.temp }}/plans
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: ${{ runner.temp }}/unsigned
+          merge-multiple: true
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: '17'
+          distribution: temurin
+      - run: sdkmanager 'build-tools;30.0.3'
+      - name: Sign only after unsigned identity and validation checks
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          EXPECTED_CERTIFICATE: ${{ vars.TSMARTTUBE_CERT_SHA256 }}
+          TSMARTTUBE_SIGNING_KEY: ${{ secrets.TSMARTTUBE_SIGNING_KEY }}
+          TSMARTTUBE_STORE_PASSWORD: ${{ secrets.TSMARTTUBE_STORE_PASSWORD }}
+          TSMARTTUBE_KEY_PASSWORD: ${{ secrets.TSMARTTUBE_KEY_PASSWORD }}
+          TSMARTTUBE_KEY_ALIAS: ${{ secrets.TSMARTTUBE_KEY_ALIAS }}
+        run: |
+          python3 -I tools/release/artifacts.py --plan "$RUNNER_TEMP/plans/$CHANNEL-plan.json" \
+            --apk-dir "$RUNNER_TEMP/unsigned" --sign-output "$RUNNER_TEMP/signed" \
+            --certificate-sha256 "$EXPECTED_CERTIFICATE"
+      - name: Retain the exact signed bytes for interrupted-publication recovery
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-${{ inputs.channel }}
+          path: ${{ runner.temp }}/signed/
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    needs: sign
+    if: vars.TSMARTTUBE_RELEASES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs.controller_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ inputs.plans_artifact_id }}
+          path: ${{ runner.temp }}/plans
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.sign.outputs.artifact_id }}
+          path: ${{ runner.temp }}/signed
+          merge-multiple: true
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: '17'
+          distribution: temurin
+      - run: sdkmanager 'build-tools;30.0.3'
+      - name: Reverify signed bytes, publish immutable assets, then promote the feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANNEL: ${{ inputs.channel }}
+          EXPECTED_CERTIFICATE: ${{ vars.TSMARTTUBE_CERT_SHA256 }}
+        run: |
+          python3 -I tools/release/publish.py --plan "$RUNNER_TEMP/plans/$CHANNEL-plan.json" \
+            --report "$RUNNER_TEMP/signed/artifacts.json" --apk-dir "$RUNNER_TEMP/signed" \
+            --certificate-sha256 "$EXPECTED_CERTIFICATE" --publish

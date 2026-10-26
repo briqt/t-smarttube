@@ -1,0 +1,4 @@
+<resources>
+    <!-- Development builds are updated by installing a locally built APK. -->
+    <string-array name="update_urls" />
+</resources>

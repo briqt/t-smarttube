@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string translatable="false" name="app_name"><![CDATA[SmartTube]]></string>
-    <string translatable="false" name="browse_title"><![CDATA[SmartTube]]></string>
+    <string translatable="false" name="app_name">t-SmartTube</string>
+    <item type="string" name="browse_title">@string/app_name</item>
+    <item type="string" name="search_label">@string/app_name</item>
+    <item type="string" name="settings_description">@string/app_name</item>
 </resources>

@@ -1,3 +1,50 @@
+# t-SmartTube
+
+An experimental AI bilingual-subtitle fork of [SmartTube](https://github.com/yuliskov/SmartTube).
+This fork is maintained and released separately from upstream. Use
+[**this repository's releases**](https://github.com/briqt/t-smarttube/releases) for t-SmartTube;
+the upstream download links in the preserved documentation below install the original app.
+
+## Subtitle enhancement
+
+- Enable AI subtitles for a channel from the existing player subtitle menu.
+- Configure the global target language, original/translation order, or translation-only display in **AI subtitle details**.
+- Configure a chat-completions-compatible endpoint, model and API key through the native connection editor or a temporary local-network pairing page. QR codes are generated locally.
+- Existing subtitle selection, NONE, styling, size and position controls remain available. Turning AI off restores the native subtitle path.
+- Translation uses available text captions; it does not upload audio or create captions for videos without them. Unsupported or incomplete enhancement results fall back to native captions.
+
+The pairing page uses **unencrypted local HTTP**. Use it only on a trusted home network and close it when finished.
+API keys are not included in APKs or returned by the pairing page. Provider charges and model compatibility are the user's responsibility.
+
+## Installation and updates
+
+| Channel | Application ID |
+|---|---|
+| Stable upstream stream | `io.github.briqt.tsmarttube.stable` |
+| Beta upstream stream | `io.github.briqt.tsmarttube.beta` |
+
+The two channels and the original SmartTube can coexist. Debug builds add `.dev` and are not upgrades to release installs.
+Both channel names describe their **upstream source stream**, not a guarantee that this fork's subtitle enhancement is production-ready.
+
+Release versions use `<upstream version>-t<enhancement revision>`. This fork's app update addresses point to this repository's own channel feeds, not upstream APKs.
+The follow workflow detects upstream versioned releases and integrates the same enhancement into each channel. Conflicts or failed builds stop publication and retain the previous feed.
+Scheduling is best-effort, not an immediate-release guarantee. Setup, signing and recovery are documented in [Release tools](tools/release/README.md).
+
+## Current limitations
+
+The ordinary application has been exercised with real caption translation, seeking, NONE/reselection, AI-off native captions and short continuous playback.
+This does not establish every caption source/format, every device, long-running stability, live-caption behavior, or final TV/remote usability.
+Long caption groups can still be crowded, especially in portrait layouts. Source timing, translation completeness and provider latency may cause native-caption fallback.
+
+Please report the app version, upstream channel, caption language/type, and reproduction steps in [issues](https://github.com/briqt/t-smarttube/issues).
+Remove keys, cookies, signed URLs and other credentials from logs or screenshots. Upstream attribution and licenses remain unchanged.
+
+---
+
+## Preserved upstream documentation
+
+The text below is retained from SmartTube and refers to **upstream** features, downloads and announcements, not to this fork's maintainer or release status.
+
 [<img src="images/badge_fdroid.png" alt="Get it on F-Droid" height="80">](https://f-droid.org/packages/app.smarttube.fdroid/)
 [<img src="images/badge_github.png" alt="Get it on GitHub" height="80">](https://github.com/yuliskov/SmartTube/releases)
 

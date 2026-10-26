@@ -19,6 +19,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.controllers.Rem
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.controllers.SuggestionsController;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.controllers.VideoLoaderController;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.controllers.VideoStateController;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.settings.CaptionSettingsController;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.listener.PlayerEventListener;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.listener.ViewEventListener;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.base.BasePresenter;
@@ -56,6 +57,7 @@ public class PlaybackPresenter extends BasePresenter<PlaybackView> implements Pl
 
         // NOTE: position matters!!!
         mEventListeners.add(new VideoStateController());
+        mEventListeners.add(new CaptionSettingsController());
         mEventListeners.add(new SuggestionsController());
         mEventListeners.add(new VideoLoaderController());
         mEventListeners.add(new ErrorFixerController());

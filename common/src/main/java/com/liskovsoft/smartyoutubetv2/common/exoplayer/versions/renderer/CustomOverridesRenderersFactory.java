@@ -2,6 +2,10 @@ package com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.renderer;
 
 import android.content.Context;
 import android.os.Handler;
+import android.os.Looper;
+import com.google.android.exoplayer2.text.TextOutput;
+import com.google.android.exoplayer2.text.TextRenderer;
+import com.google.android.exoplayer2.text.SubtitleDecoderFactory;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.Renderer;
 import com.google.android.exoplayer2.audio.AudioCapabilities;
@@ -15,6 +19,8 @@ import com.google.android.exoplayer2.util.AmazonQuirks;
 import com.google.android.exoplayer2.video.VideoRendererEventListener;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.selector.BlacklistMediaCodecSelector;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.observation.CaptionObservation;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.observation.CaptionCueDispatcher;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerTweaksData;
 
 import java.util.ArrayList;
@@ -29,6 +35,21 @@ public class CustomOverridesRenderersFactory extends CustomRenderersFactoryBase 
             "UGOOS (UGOOS)",
             "55UC30G (ctl_iptv_mrvl)" // Kivi 55uc30g
     };
+    private SubtitleDecoderFactory mSubtitleDecoderFactory = SubtitleDecoderFactory.DEFAULT;
+
+    public CustomOverridesRenderersFactory setSubtitleDecoderFactory(SubtitleDecoderFactory factory) {
+        mSubtitleDecoderFactory = factory;
+        return this;
+    }
+
+    @Override
+    protected void buildTextRenderers(Context context, TextOutput output, Looper outputLooper,
+                                      int extensionRendererMode, ArrayList<Renderer> out) {
+        out.add(mSubtitleDecoderFactory instanceof CaptionObservation ?
+                CaptionCueDispatcher.createRenderer((CaptionObservation) mSubtitleDecoderFactory, output, outputLooper) :
+                new TextRenderer(output, outputLooper, mSubtitleDecoderFactory));
+    }
+
     private final PlayerData mPlayerData;
     private final PlayerTweaksData mPlayerTweaksData;
     // 2.12, 2.13

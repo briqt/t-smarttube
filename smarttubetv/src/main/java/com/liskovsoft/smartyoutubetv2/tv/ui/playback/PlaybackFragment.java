@@ -1,5 +1,7 @@
 package com.liskovsoft.smartyoutubetv2.tv.ui.playback;
 
+import com.liskovsoft.smartyoutubetv2.common.subtitle.presentation.CaptionOutputBridge;
+
 import android.media.session.PlaybackState;
 import android.os.Build.VERSION;
 import android.os.Bundle;
@@ -482,7 +484,8 @@ public class PlaybackFragment extends SeekModePlaybackFragment implements Playba
         DefaultTrackSelector trackSelector = new RestoreTrackSelector(new AdaptiveTrackSelection.Factory());
         mExoPlayerController.setTrackSelector(trackSelector);
 
-        DefaultRenderersFactory renderersFactory = new CustomOverridesRenderersFactory(getContext());
+        DefaultRenderersFactory renderersFactory = new CustomOverridesRenderersFactory(getContext())
+                .setSubtitleDecoderFactory(mExoPlayerController.createSubtitleDecoderFactory());
         mPlayer = mPlayerInitializer.createPlayer(getContext(), renderersFactory, trackSelector);
 
         mExoPlayerController.setPlayer(mPlayer);
@@ -504,13 +507,19 @@ public class PlaybackFragment extends SeekModePlaybackFragment implements Playba
         mExoPlayerController.setPlayerView(mPlayerGlue);
     }
 
+    @Override
+    public CaptionOutputBridge getCaptionOutputBridge() {
+        createSubtitleManager();
+        return mExoPlayerController == null ? null : mExoPlayerController.getCaptionOutputBridge();
+    }
+
     private void createSubtitleManager() {
         if (getView() == null || mPlayer == null) {
             return;
         }
 
         if (mSubtitleManager == null) {
-            mSubtitleManager = new SubtitleManager(getView().findViewById(R.id.leanback_subtitles));
+            mSubtitleManager = mExoPlayerController.createSubtitleManager(getView().findViewById(R.id.leanback_subtitles));
 
             // subs renderer
             if (mPlayer.getTextComponent() != null) {

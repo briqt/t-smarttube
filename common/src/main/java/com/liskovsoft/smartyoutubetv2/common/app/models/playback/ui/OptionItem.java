@@ -3,6 +3,7 @@ package com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui;
 public interface OptionItem {
     int getId();
     CharSequence getTitle();
+    default void setOnTitleChanged(Runnable listener) { }
     CharSequence getDescription();
     boolean isSelected();
     void onSelect(boolean isSelected);

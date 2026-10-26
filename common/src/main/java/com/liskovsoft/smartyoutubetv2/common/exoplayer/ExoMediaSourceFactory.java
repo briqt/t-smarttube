@@ -44,6 +44,7 @@ import com.liskovsoft.smartyoutubetv2.common.exoplayer.errors.DashDefaultLoadErr
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.errors.SabrDefaultLoadErrorHandlingPolicy;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.errors.TrackErrorFixer;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerTweaksData;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.observation.CaptionObservation;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 import com.liskovsoft.googlecommon.common.helpers.DefaultHeaders;
 
@@ -72,9 +73,14 @@ public class ExoMediaSourceFactory {
     private TrackErrorFixer mTrackErrorFixer;
     private DataSource.Factory mMediaDataSourceFactory;
     private DataSource.Factory mSabrMediaDataSourceFactory;
+    private CaptionObservation mCaptionObservation;
 
     public ExoMediaSourceFactory(Context context) {
         mContext = context;
+    }
+
+    public void setCaptionObservation(CaptionObservation observation) {
+        mCaptionObservation = observation;
     }
 
     public MediaSource fromSabrFormatInfo(MediaItemFormatInfo formatInfo) {
@@ -250,12 +256,16 @@ public class ExoMediaSourceFactory {
 
     private SabrManifest getSabrManifest(MediaItemFormatInfo formatInfo) {
         SabrManifestParser parser = new SabrManifestParser();
-        return parser.parse(formatInfo);
+        SabrManifest manifest = parser.parse(formatInfo);
+        if (mCaptionObservation != null) mCaptionObservation.bindSource(formatInfo, manifest, getSabrMediaDataSourceFactory());
+        return manifest;
     }
 
     private DashManifest getManifest(MediaItemFormatInfo formatInfo) {
         DashManifestParser2 parser = new DashManifestParser2();
-        return parser.parse(formatInfo);
+        DashManifest manifest = parser.parse(formatInfo);
+        if (mCaptionObservation != null) mCaptionObservation.bindSource(formatInfo, manifest, getMediaDataSourceFactory());
+        return manifest;
     }
 
     private DashManifest getManifest(Uri uri, InputStream mpdContent) {

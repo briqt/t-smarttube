@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Subtitle connection</title>
+  <link rel="stylesheet" href="/pair.css">
+  <script src="/pair.js" defer></script>
+</head>
+<body>
+<main>
+  <header>
+    <svg class="caption-mark" viewBox="0 0 48 48" aria-hidden="true"><rect x="4" y="8" width="40" height="32" rx="7"/><path d="M13 20h10m5 0h7M13 28h6m5 0h11"/></svg>
+    <div><h1 data-i18n="title">Subtitle connection</h1><p id="peer" class="muted"></p></div>
+  </header>
+  <p class="network-note" data-i18n="network">Use your own trusted home network. Local HTTP does not encrypt the connection details sent to your TV.</p>
+  <p id="status" class="status" role="status" aria-live="polite" data-i18n="loading">Reading the TV settings…</p>
+  <noscript>This page needs JavaScript. You can also enter the connection directly on your TV.</noscript>
+  <form id="connection-form" method="post" action="/api/save" autocomplete="off">
+    <fieldset id="connection-fields" disabled>
+      <legend data-i18n="connection">Connection</legend>
+      <label for="endpoint" data-i18n="endpoint">Complete API endpoint</label>
+      <input id="endpoint" type="url" inputmode="url" maxlength="4096" placeholder="https://…/chat/completions" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+      <label for="model" data-i18n="model">Model ID</label>
+      <input id="model" type="text" maxlength="256" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+      <p id="key-state" class="key-state"></p>
+      <fieldset class="key-options">
+        <legend data-i18n="key">Key</legend>
+        <label><input type="radio" name="key-edit" value="KEEP"><span data-i18n="keep">Keep saved Key</span></label>
+        <label><input type="radio" name="key-edit" value="REPLACE" checked><span data-i18n="replace">Use a new Key</span></label>
+        <label><input type="radio" name="key-edit" value="CLEAR"><span data-i18n="clearKey">Remove Key</span></label>
+      </fieldset>
+      <div id="replacement-wrap">
+        <label for="replacement" data-i18n="newKey">New Key</label>
+        <input id="replacement" type="password" maxlength="8192" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+        <p class="hint" data-i18n="keyHint">The TV never returns your saved Key to this page.</p>
+      </div>
+      <p id="endpoint-warning" class="hint warning" hidden data-i18n="endpointChanged">Changing the endpoint requires a new Key or explicitly removing the old one.</p>
+      <details>
+        <summary data-i18n="advanced">Output and model parameters</summary>
+        <label for="tokens" data-i18n="tokens">Maximum output tokens</label>
+        <input id="tokens" type="number" inputmode="numeric" min="1" max="1048576" step="1" value="1024" required>
+        <label for="thinking" data-i18n="thinking">Thinking parameter</label>
+        <select id="thinking"><option value="OMIT" data-i18n="thinkingDefault">Do not add a parameter</option><option value="DEEPSEEK_DISABLED" data-i18n="thinkingDisabled">DeepSeek: send disabled</option></select>
+        <p class="hint" data-i18n="modelHint">Limits and parameters must match your model. Saving alone does not verify model access.</p>
+      </details>
+      <div class="actions"><button id="test" type="button" class="secondary" data-i18n="test">Test connection</button><button id="save" type="submit" data-i18n="save">Save on TV</button></div>
+      <p class="hint" data-i18n="testHint">Testing sends one small model request. It does not save the form.</p>
+    </fieldset>
+  </form>
+  <details class="remove-section"><summary data-i18n="removeTitle">Remove this connection</summary><p class="hint" data-i18n="removeHint">Remove the endpoint, model and Key from the TV. Subtitle display preferences stay unchanged.</p><button id="remove" class="danger" type="button" disabled data-i18n="remove">Remove connection</button></details>
+  <footer><button id="cancel" class="quiet" type="button" data-i18n="cancel">End pairing</button><p class="hint" data-i18n="footer">Display mode and channel translation remain in the TV subtitle menu. This page uses no external resources or browser storage.</p></footer>
+</main>
+</body>
+</html>

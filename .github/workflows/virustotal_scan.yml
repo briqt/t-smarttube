@@ -11,6 +11,7 @@ on:
 
 jobs:
   virustotal_scan:
+    if: github.repository == 'yuliskov/SmartTube'
     permissions:
       contents: write
     runs-on: ubuntu-latest

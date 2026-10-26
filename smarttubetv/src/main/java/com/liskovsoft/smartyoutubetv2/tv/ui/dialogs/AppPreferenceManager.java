@@ -16,6 +16,7 @@ import com.liskovsoft.smartyoutubetv2.tv.ui.dialogs.other.ChatPreference;
 import com.liskovsoft.smartyoutubetv2.tv.ui.dialogs.other.CommentsPreference;
 import com.liskovsoft.smartyoutubetv2.tv.ui.dialogs.other.StringListPreference;
 
+import java.lang.ref.WeakReference;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -117,7 +118,12 @@ public class AppPreferenceManager {
             OptionItem item = category.options.get(0);
             Preference preference = new Preference(mContext);
             preference.setPersistent(false);
-            preference.setTitle(item.getTitle());
+            updateButtonTitle(preference, item);
+            WeakReference<Preference> binding = new WeakReference<>(preference);
+            item.setOnTitleChanged(() -> {
+                Preference bound = binding.get();
+                if (bound != null) updateButtonTitle(bound, item);
+            });
             preference.setOnPreferenceClickListener(pref -> {
                 item.onSelect(true);
                 return true;
@@ -127,6 +133,12 @@ public class AppPreferenceManager {
         }
 
         return result;
+    }
+
+    private static void updateButtonTitle(Preference preference, OptionItem item) {
+        CharSequence title = item.getTitle();
+        if (title != null && TextUtils.indexOf(title, '\n') >= 0) preference.setSingleLineTitle(false);
+        preference.setTitle(title);
     }
 
     public Preference createSwitchPreference(OptionCategory category) {

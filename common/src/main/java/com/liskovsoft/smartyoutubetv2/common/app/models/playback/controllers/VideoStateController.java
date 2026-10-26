@@ -1,5 +1,7 @@
 package com.liskovsoft.smartyoutubetv2.common.app.models.playback.controllers;
 
+import com.liskovsoft.smartyoutubetv2.common.subtitle.settings.CaptionSettingsController;
+
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemMetadata;
 import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.sharedutils.mylogger.Log;
@@ -477,6 +479,9 @@ public class VideoStateController extends BasePlayerController {
                     ? getPlayerData().getLastSubtitleFormat() : FormatItem.SUBTITLE_NONE;
         }
 
+        CaptionSettingsController captions =
+                getController(CaptionSettingsController.class);
+        if (captions != null) result = captions.restoreSubtitle(result);
         getPlayer().setFormat(result);
     }
 

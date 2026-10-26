@@ -1,0 +1,15 @@
+// Shared app/common test runtime; production dependencies and the Android minimum stay unchanged.
+dependencies {
+    testImplementation 'org.robolectric:robolectric:4.7.3'
+}
+
+tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+    maxParallelForks = 1
+    maxHeapSize = '512m'
+    systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
+    def sdkDir = project.findProperty('robolectricSdkDir')
+    if (sdkDir != null) {
+        systemProperty 'robolectric.offline', 'true'
+        systemProperty 'robolectric.dependency.dir', project.file(sdkDir).absolutePath
+    }
+}

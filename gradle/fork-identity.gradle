@@ -1,0 +1,37 @@
+// Keep upstream version literals intact; apply the fork identity after the app DSL is evaluated.
+def identities = [
+        stbeta: 'io.github.briqt.tsmarttube.beta',
+        ststable: 'io.github.briqt.tsmarttube.stable'
+]
+def upstreamCode = android.defaultConfig.versionCode
+def upstreamName = android.defaultConfig.versionName
+def revisionText = (project.findProperty('enhancementRevision') ?: '0').toString()
+if (!(revisionText ==~ /0|[1-9][0-9]{0,2}/) || upstreamCode == null || upstreamCode <= 0 || upstreamName == null) {
+    throw new GradleException('Invalid upstream version or enhancementRevision (0..999)')
+}
+def revision = revisionText.toInteger()
+long combinedCode = upstreamCode.longValue() * 1000L + revision
+if (combinedCode > Integer.MAX_VALUE) throw new GradleException('Fork versionCode exceeds the Android range')
+identities.each { name, packageName ->
+    def flavor = android.productFlavors.getByName(name)
+    flavor.applicationId = packageName
+    flavor.versionCode = (int) combinedCode
+    flavor.versionName = upstreamName + '-t' + revision
+}
+android.applicationVariants.all { variant ->
+    if (identities.containsKey(variant.flavorName)) {
+        variant.resValue 'string', 'search_authority', variant.applicationId
+        variant.resValue 'string', 'search_intent_data', 'content://' + variant.applicationId + '/video'
+    }
+}
+def timestampText = project.findProperty('forkBuildTimestamp')?.toString()
+if (timestampText != null) {
+    if (!(timestampText ==~ /[1-9][0-9]{0,15}/)) throw new GradleException('Invalid forkBuildTimestamp')
+    android.defaultConfig.buildConfigField 'long', 'TIMESTAMP', timestampText + 'L'
+}
+tasks.register('printForkIdentity') {
+    doLast {
+        println groovy.json.JsonOutput.toJson([upstreamVersionCode: upstreamCode, upstreamVersionName: upstreamName,
+                enhancementRevision: revision, versionCode: combinedCode, identities: identities])
+    }
+}

@@ -1,0 +1,5 @@
+<resources>
+    <string translatable="false" name="app_name">t-smarttube dev</string>
+    <string translatable="false" name="search_label">t-smarttube dev</string>
+    <string translatable="false" name="settings_description">t-smarttube dev videos</string>
+</resources>

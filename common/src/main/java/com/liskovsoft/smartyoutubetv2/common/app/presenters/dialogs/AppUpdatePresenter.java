@@ -2,6 +2,7 @@ package com.liskovsoft.smartyoutubetv2.common.app.presenters.dialogs;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
 import com.liskovsoft.appupdatechecker2.AppUpdateChecker;
 import com.liskovsoft.appupdatechecker2.AppUpdateCheckerListener;
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
@@ -49,6 +50,14 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
     }
 
     public void start(boolean forceCheck) {
+        if ((getContext().getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&
+                mUpdateManifestUrls.length == 0) {
+            if (forceCheck) {
+                MessageHelpers.showMessage(getContext(), getContext().getString(R.string.check_for_updates) + ": " +
+                        getContext().getString(R.string.option_disabled));
+            }
+            return;
+        }
         mIsForceCheck = forceCheck;
 
         if (forceCheck) {

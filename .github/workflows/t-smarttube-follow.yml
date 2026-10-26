@@ -1,0 +1,92 @@
+name: t-SmartTube follow upstream
+
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  push:
+    branches: [master]
+    paths:
+      - 'common/**'
+      - 'smarttubetv/**'
+      - 'gradle/**'
+      - 'tools/release/**'
+      - '.github/workflows/t-smarttube-*.yml'
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Channel to validate
+        type: choice
+        options: [all, stable, beta]
+        default: all
+      publish:
+        description: Publish only when the repository release switch is also enabled
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: t-smarttube-follow-upstream
+  cancel-in-progress: false
+
+jobs:
+  tools:
+    if: github.repository == 'briqt/t-smarttube' && github.ref == 'refs/heads/master' && (github.event_name != 'schedule' || vars.TSMARTTUBE_RELEASES_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Test the release controller without network or credentials
+        run: python3 -I -m unittest discover -s tools/release -p 'test_*.py' -v
+
+  plan:
+    needs: tools
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      has_candidates: ${{ steps.plan.outputs.has_candidates }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Observe upstream versioned releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I tools/release/observe.py --output-dir "$RUNNER_TEMP/observation"
+      - name: Extract the single enhancement delta and select new candidates
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANNEL: ${{ inputs.channel || 'all' }}
+        run: |
+          python3 -I tools/release/pipeline.py plan \
+            --observation "$RUNNER_TEMP/observation/observation.json" \
+            --channel "$CHANNEL" --fetch-upstream --read-release-state \
+            --output-dir "$RUNNER_TEMP/plans"
+      - name: Keep the trusted source plans separate from build outputs
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-plans
+          path: ${{ runner.temp }}/plans/
+          if-no-files-found: error
+          retention-days: 30
+
+  channel:
+    needs: plan
+    if: needs.plan.outputs.has_candidates == 'true'
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    uses: ./.github/workflows/t-smarttube-channel.yml
+    with:
+      channel: ${{ matrix.channel }}
+      controller_sha: ${{ github.sha }}
+      plans_artifact_id: ${{ needs.plan.outputs.artifact_id }}
+      allow_publish: ${{ vars.TSMARTTUBE_RELEASES_ENABLED == 'true' && (github.event_name != 'workflow_dispatch' || inputs.publish) }}

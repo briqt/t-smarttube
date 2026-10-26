@@ -552,7 +552,8 @@ public class EmbedPlayerView extends PlayerView implements PlaybackView {
         DefaultTrackSelector trackSelector = new RestoreTrackSelector(new AdaptiveTrackSelection.Factory());
         mExoPlayerController.setTrackSelector(trackSelector);
 
-        DefaultRenderersFactory renderersFactory = new CustomOverridesRenderersFactory(getContext());
+        DefaultRenderersFactory renderersFactory = new CustomOverridesRenderersFactory(getContext())
+                .setSubtitleDecoderFactory(mExoPlayerController.createSubtitleDecoderFactory());
         mPlayer = mPlayerInitializer.createPlayer(getContext(), renderersFactory, trackSelector);
         mPlayer.setPlayWhenReady(true);
         //mPlayer.setRepeatMode(Player.REPEAT_MODE_ONE);

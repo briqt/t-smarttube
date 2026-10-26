@@ -149,6 +149,11 @@ public class AppPrefs extends SharedPreferencesBase implements AccountChangeList
         putBoolean(WEB_PROXY_ENABLED, enabled);
     }
 
+    /** Existing native settings bucket, not an immutable account ID. Never log this value. */
+    public String getProfileScope() {
+        return getProfileKey("settings_scope", isMultiProfilesEnabled());
+    }
+
     private String getProfileName() {
         return getString(LAST_PROFILE_NAME, null);
     }

@@ -1,0 +1,22 @@
+WEBVTT
+Kind: captions
+Language: en
+
+00:00:00.100 --> 00:00:06.040 align:start position:0%
+
+00:00:06.040 --> 00:00:06.050 align:start position:0%
+[token1]
+
+00:00:06.050 --> 00:00:07.480 align:start position:0%
+[token1]
+token2<00:00:06.250><c> token3</c><00:00:06.690><c> token4</c><00:00:06.810><c> token5</c><00:00:07.049><c> token6</c><00:00:07.129><c> token7</c><00:00:07.290><c> token8</c>
+
+00:00:07.480 --> 00:00:07.490 align:start position:0%
+token2 token3 token4 token5 token6 token7 token8
+
+00:00:07.490 --> 00:00:10.400 align:start position:0%
+token2 token3 token4 token5 token6 token7 token8
+token9<00:00:08.049><c> token10</c><00:00:09.010><c> token11</c><00:00:09.330><c> token12</c><00:00:09.650><c> token13</c><00:00:09.930><c> token14</c>
+
+00:00:10.400 --> 00:00:10.410 align:start position:0%
+token9 token10 token11 token12 token13 token14

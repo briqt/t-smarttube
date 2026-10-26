@@ -8,6 +8,7 @@ import java.util.List;
 public class UiOptionItem implements OptionItem {
     private int mId;
     private CharSequence mTitle;
+    private Runnable mOnTitleChanged;
     private CharSequence mDescription;
     private boolean mIsSelected;
     private FormatItem mFormat;
@@ -123,6 +124,18 @@ public class UiOptionItem implements OptionItem {
     @Override
     public CharSequence getTitle() {
         return mTitle;
+    }
+
+    /** Update the bound native row on the UI thread, without rebuilding its menu. */
+    public void setTitle(CharSequence title) {
+        if (mTitle == title || mTitle != null && mTitle.equals(title)) return;
+        mTitle = title;
+        if (mOnTitleChanged != null) mOnTitleChanged.run();
+    }
+
+    @Override
+    public void setOnTitleChanged(Runnable listener) {
+        mOnTitleChanged = listener;
     }
 
     @Override

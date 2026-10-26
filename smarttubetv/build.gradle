@@ -1,43 +1,12 @@
 apply from: gradle.ext.sharedModulesConstants
 
-buildscript {
-    repositories {
-        google()
-        mavenCentral()
-        jcenter()
-    }
-
-    dependencies {
-        // These docs use an open ended version so that our plugin
-        // can be updated quickly in response to Android tooling updates
-
-        // Check that you have the Google Services Gradle plugin v4.3.2 or later
-        // (if not, add it).
-        classpath 'com.google.gms:google-services:4.3.15'
-
-        // Add the Crashlytics Gradle plugin.
-        // https://firebase.google.com/docs/crashlytics/get-started?platform=android
-        // https://firebase.google.com/docs/android/setup
-        classpath 'com.google.firebase:firebase-crashlytics-gradle:2.7.1'
-    }
-}
-
 apply plugin: 'com.android.application'
+apply from: rootProject.file('gradle/subtitle-tests.gradle')
 
 def keystorePropertiesFile = rootProject.file("keystore.properties")
 def keystoreProperties = new Properties()
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-}
-
-// The first letter of the flavor name must be in uppercase
-if (new File("${projectDir}/google-services.json").exists() && (getGradle().getStartParameter().getTaskRequests().toString().contains("Stbeta") ||
-        getGradle().getStartParameter().getTaskRequests().toString().contains("Ststable"))) {
-    // Google Services Gradle plugin (transforms google-services.json file)
-    apply plugin: 'com.google.gms.google-services'
-
-    // Apply the Crashlytics Gradle plugin
-    apply plugin: 'com.google.firebase.crashlytics'
 }
 
 android {
@@ -53,7 +22,7 @@ android {
     ndkVersion "21.0.6113669" // reduce size of the *.so files (stripping debug symbols)
     
     defaultConfig {
-        // values linked with applicationId: searchable.searchSuggestAuthority, searchable.searchSuggestIntentData, VideoContract.CONTENT_AUTHORITY
+        // Fork identities and matching search resources are applied by gradle/fork-identity.gradle.
         applicationId "app.smarttube"
         minSdkVersion project.properties.minSdkVersion
         targetSdkVersion project.properties.targetSdkVersion
@@ -111,11 +80,11 @@ android {
                 signingConfig signingConfigs.release
             }
         }
-        // Use same key for release and debug for testing
+        // Keep debug installs separate from the release identity and signing key.
         debug {
-            if (keystorePropertiesFile.exists()) {
-                signingConfig signingConfigs.release
-            }
+            applicationIdSuffix ".dev"
+            versionNameSuffix "-dev"
+            signingConfig signingConfigs.debug
         }
     }
 
@@ -123,7 +92,7 @@ android {
     // https://stackoverflow.com/questions/18332474/how-to-set-versionname-in-apk-filename-using-gradle
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
-            def project = "SmartTube"
+            def project = ['stbeta', 'ststable'].contains(variant.flavorName) ? 't-SmartTube' : 'SmartTube'
             def flavor = variant.productFlavors[-1].name.substring(2) // remove st prefix
             def buildType = variant.buildType.name.take(1)
             def version = variant.versionName
@@ -217,7 +186,6 @@ dependencies {
     //////// END EXOPLAYER //////////
 
     testImplementation 'junit:junit:' + junitVersion
-    testImplementation 'org.robolectric:robolectric:' + robolectricVersion
     androidTestImplementation 'androidx.test.ext:junit:' + testXSupportVersion
     androidTestImplementation 'androidx.test.ext:truth:' + testXSupportVersion
     androidTestImplementation 'androidx.test:runner:' + testXSupportVersion
@@ -236,16 +204,6 @@ dependencies {
     implementation 'io.reactivex.rxjava2:rxandroid:' + rxAndroidVersion
     implementation 'io.reactivex.rxjava2:rxjava:' + rxJavaVersion
 
-    // Add the Firebase Crashlytics SDK.
-
-    stbetaImplementation('com.google.firebase:firebase-crashlytics:' + firebaseCrashlyticsVersion) {
-        transitive = true
-    }
-
-    ststableImplementation('com.google.firebase:firebase-crashlytics:' + firebaseCrashlyticsVersion) {
-        transitive = true
-    }
-
     // debugImplementation 'com.squareup.leakcanary:leakcanary-android:2.14'
 
     implementation 'net.gotev:speech:' + gotevSpeechVersion
@@ -255,3 +213,5 @@ dependencies {
 
     implementation 'androidx.work:work-runtime:' + workVersion
 }
+
+apply from: rootProject.file('gradle/fork-identity.gradle')

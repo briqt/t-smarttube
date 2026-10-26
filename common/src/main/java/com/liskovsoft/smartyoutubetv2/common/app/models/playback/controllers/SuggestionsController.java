@@ -1,5 +1,7 @@
 package com.liskovsoft.smartyoutubetv2.common.app.models.playback.controllers;
 
+import com.liskovsoft.smartyoutubetv2.common.subtitle.settings.CaptionSettingsController;
+
 import android.text.TextUtils;
 import android.util.Pair;
 
@@ -224,8 +226,12 @@ public class SuggestionsController extends BasePlayerController {
             return;
         }
 
+        CaptionSettingsController captions =
+                getController(CaptionSettingsController.class);
+        if (captions != null && !captions.metadataCurrent(video, mediaItemMetadata)) return;
         video.sync(mediaItemMetadata);
         getPlayer().setVideo(video);
+        if (captions != null) captions.metadataUpdated(video, mediaItemMetadata);
 
         getPlayer().setNextTitle(getNext());
 

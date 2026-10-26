@@ -1,0 +1,3 @@
+<resources>
+    <string translatable="false" name="search_authority">app.smarttube.fdroid.dev.search_provider</string>
+</resources>

@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
           package="com.liskovsoft.smartyoutubetv2.common">
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Local Wi-Fi interface lookup for short-lived phone configuration. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- Android 14 (API 34) -->
     <!-- <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" /> -->
     <!-- API level 34 -->

@@ -20,6 +20,8 @@ import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs;
 import com.liskovsoft.smartyoutubetv2.common.prefs.common.DataChangeBase.OnDataChange;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.observation.CaptionObservation;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.presentation.CaptionOutputBridge;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +34,8 @@ public class SubtitleManager implements TextOutput, OnDataChange {
     private final AppPrefs mPrefs;
     private final PlayerData mPlayerData;
     private CharSequence subsBuffer;
+    private CaptionOutputBridge mCaptionBridge;
+    private boolean mReleased;
 
     public static class SubtitleStyle {
         public final int nameResId;
@@ -64,19 +68,44 @@ public class SubtitleManager implements TextOutput, OnDataChange {
         configureSubtitleView();
     }
 
+    public void attachCaptionBridge(CaptionObservation observation, CaptionOutputBridge.Position position) {
+        if (mReleased) return;
+        if (mCaptionBridge != null) mCaptionBridge.close();
+        mCaptionBridge = observation == null ? null : CaptionOutputBridge.create(observation, mSubtitleView::setCues, position);
+    }
+
+    public CaptionOutputBridge getCaptionBridge() { return mCaptionBridge; }
+
+    public void release() {
+        mReleased = true;
+        if (mCaptionBridge != null) mCaptionBridge.close();
+        mCaptionBridge = null;
+    }
+
     @Override
     public void onDataChange() {
+        if (mReleased) return;
         configureSubtitleView();
+        if (mCaptionBridge != null) mCaptionBridge.invalidateStyle();
     }
 
     @Override
     public void onCues(List<Cue> cues) {
+        if (mReleased) return;
         if (mSubtitleView != null) {
-            mSubtitleView.setCues(forceCenterAlignment(cues));
+            if (mCaptionBridge != null && !mCaptionBridge.acceptsNativeCues(cues)) return;
+            if (cues.isEmpty()) {
+                subsBuffer = null;
+            }
+            List<Cue> nativeCues = forceCenterAlignment(cues);
+            if (mCaptionBridge != null) mCaptionBridge.onNativeCues(cues, nativeCues);
+            else mSubtitleView.setCues(nativeCues);
         }
     }
 
     public void show(boolean show) {
+        if (mReleased) return;
+        if (mCaptionBridge != null) mCaptionBridge.setVisible(show);
         if (mSubtitleView != null) {
             mSubtitleView.setVisibility(show ? View.VISIBLE : View.GONE);
         }
