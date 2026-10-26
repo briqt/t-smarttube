@@ -80,6 +80,13 @@ class WorkflowTest(unittest.TestCase):
     def test_authored_workflow_contract(self):
         self.assertEqual(violations(self.follow, self.channel), [])
 
+    def test_each_fresh_runner_initializes_android_before_sdkmanager(self):
+        for name in ("build", "sign", "publish"):
+            block = job(self.channel, name)
+            setup = re.search(r"uses: android-actions/setup-android@[0-9a-f]{40}", block)
+            self.assertIsNotNone(setup, name)
+            self.assertLess(setup.start(), block.index("sdkmanager"), name)
+
     def test_bad_permission_mutation_is_detected(self):
         changed = self.channel.replace("      contents: read", "      contents: write", 1)
         self.assertIn("build-not-read-only", violations(self.follow, changed))

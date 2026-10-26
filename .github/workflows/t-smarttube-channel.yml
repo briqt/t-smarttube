@@ -44,6 +44,7 @@ jobs:
           java-version: '17'
           distribution: temurin
           cache: gradle
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
       - name: Install upstream Android build components
         run: sdkmanager 'platforms;android-34' 'build-tools;30.0.3' 'ndk;21.0.6113669'
       - name: Apply the same enhancement to the selected upstream snapshot
@@ -110,6 +111,7 @@ jobs:
         with:
           java-version: '17'
           distribution: temurin
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
       - run: sdkmanager 'build-tools;30.0.3'
       - name: Sign only after unsigned identity and validation checks
         env:
@@ -158,6 +160,7 @@ jobs:
         with:
           java-version: '17'
           distribution: temurin
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
       - run: sdkmanager 'build-tools;30.0.3'
       - name: Reverify signed bytes, publish immutable assets, then promote the feed
         env:
