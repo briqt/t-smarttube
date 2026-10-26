@@ -135,7 +135,9 @@ Only after the required acceptance and explicit activation:
 
 1. Keep the dedicated long-term signing key backed up outside the source tree.
 2. Configure **environment secrets in `release-signing`**, not repository-wide
-   signing secrets and not `secrets: inherit`:
+   signing secrets and not `secrets: inherit` (the caller binds the four names
+   with nonsecret `environment-only` placeholders; only the signing job's
+   environment overrides them with real values):
    `TSMARTTUBE_SIGNING_KEY` (base64 keystore), `TSMARTTUBE_STORE_PASSWORD`,
    `TSMARTTUBE_KEY_PASSWORD`, `TSMARTTUBE_KEY_ALIAS`.
 3. Set repository variable `TSMARTTUBE_CERT_SHA256` to the public certificate's

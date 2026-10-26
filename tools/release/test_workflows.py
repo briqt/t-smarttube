@@ -80,6 +80,18 @@ class WorkflowTest(unittest.TestCase):
     def test_authored_workflow_contract(self):
         self.assertEqual(violations(self.follow, self.channel), [])
 
+    def test_caller_binds_only_nonsecret_environment_placeholders(self):
+        caller = job(self.follow, "channel")
+        bindings = re.findall(r"(?m)^      (TSMARTTUBE_[A-Z_]+): (.+)$", caller)
+        self.assertEqual(dict(bindings), {
+            "TSMARTTUBE_SIGNING_KEY": "environment-only",
+            "TSMARTTUBE_STORE_PASSWORD": "environment-only",
+            "TSMARTTUBE_KEY_PASSWORD": "environment-only",
+            "TSMARTTUBE_KEY_ALIAS": "environment-only",
+        })
+        for name, _ in bindings:
+            self.assertIn("      " + name + ":\n        required: true", self.channel)
+
     def test_each_fresh_runner_initializes_android_before_sdkmanager(self):
         for name in ("build", "sign", "publish"):
             block = job(self.channel, name)

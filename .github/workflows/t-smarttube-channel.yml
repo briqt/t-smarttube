@@ -15,6 +15,15 @@ on:
       allow_publish:
         type: boolean
         required: true
+    secrets:
+      TSMARTTUBE_SIGNING_KEY:
+        required: true
+      TSMARTTUBE_STORE_PASSWORD:
+        required: true
+      TSMARTTUBE_KEY_PASSWORD:
+        required: true
+      TSMARTTUBE_KEY_ALIAS:
+        required: true
 
 permissions:
   contents: read
