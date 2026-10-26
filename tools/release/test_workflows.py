@@ -80,15 +80,12 @@ class WorkflowTest(unittest.TestCase):
     def test_authored_workflow_contract(self):
         self.assertEqual(violations(self.follow, self.channel), [])
 
-    def test_caller_binds_only_nonsecret_environment_placeholders(self):
+    def test_caller_explicitly_maps_only_environment_signing_secret_names(self):
         caller = job(self.follow, "channel")
         bindings = re.findall(r"(?m)^      (TSMARTTUBE_[A-Z_]+): (.+)$", caller)
-        self.assertEqual(dict(bindings), {
-            "TSMARTTUBE_SIGNING_KEY": "environment-only",
-            "TSMARTTUBE_STORE_PASSWORD": "environment-only",
-            "TSMARTTUBE_KEY_PASSWORD": "environment-only",
-            "TSMARTTUBE_KEY_ALIAS": "environment-only",
-        })
+        names = ("TSMARTTUBE_SIGNING_KEY", "TSMARTTUBE_STORE_PASSWORD",
+                 "TSMARTTUBE_KEY_PASSWORD", "TSMARTTUBE_KEY_ALIAS")
+        self.assertEqual(dict(bindings), {name: "${{ secrets." + name + " }}" for name in names})
         for name, _ in bindings:
             self.assertIn("      " + name + ":\n        required: true", self.channel)
 
