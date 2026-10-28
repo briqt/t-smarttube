@@ -297,6 +297,29 @@ public class TranslationCoordinatorTest {
     }
 
     @Test
+    public void serviceUnavailableRetryAfterSurvivesSourceAndProfileChanges() {
+        Harness h = new Harness("first");
+        h.httpCode = 503;
+        h.retryAfter = "2";
+        h.enable("zh", 1, 1_000_000);
+        h.queue.drain();
+        h.now = 100;
+        h.replace("00:01.000 --> 00:05.000\nnew source\n\n");
+        h.engine.tick(1_000_000, true);
+        h.engine.configure(h.profile("fr", 2, 1));
+        assertTrue(h.queue.tasks.isEmpty());
+        h.now = 1999;
+        h.engine.tick(1_000_000, false);
+        assertTrue(h.queue.tasks.isEmpty());
+        h.httpCode = 200;
+        h.now = 2000;
+        h.engine.tick(1_000_000, false);
+        h.queue.drain();
+        assertEquals(2, h.calls);
+        assertEquals("fr-g0", h.engine.prepareFrame().items.get(0).translation);
+    }
+
+    @Test
     public void authAndPermanentHttpErrorsBlockUntilExplicitNewProfileNotNewSource() {
         for (int code : new int[]{401, 400, 302}) {
             Harness h = new Harness("first");

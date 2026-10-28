@@ -119,7 +119,7 @@ public final class CaptionConnectionStore {
             State before = expected.mState;
             if (edit == KeyEdit.KEEP && before.encrypted != null && before.credential == null) return null;
             if (edit == KeyEdit.KEEP && before.connection != null && (before.credential != null || before.encrypted != null) &&
-                    !before.connection.wire.endpoint.equals(connection.wire.endpoint)) return null;
+                    !before.connection.wire.sameCredentialTarget(connection.wire)) return null;
             if (edit == KeyEdit.KEEP && before.connection != null && config(before.connection).toString().equals(config(connection).toString())) return expected;
             String key = edit == KeyEdit.REPLACE ? replacement : edit == KeyEdit.CLEAR || before.credential == null ? null : before.credential.getKey();
             long revision = before.revision + 1;
@@ -217,10 +217,14 @@ public final class CaptionConnectionStore {
             return new State(null, null, null, raw, revision);
         }
         JSONObject encoded = object.optJSONObject("config");
-        keys(encoded, "endpoint", "model", "tokens", "requestBytes", "responseBytes", "tokenField", "thinking", "items", "source", "context", "translated", "calls");
+        boolean nativeService = encoded != null && (encoded.has("service") || encoded.has("workspace"));
+        if (nativeService) keys(encoded, "endpoint", "model", "tokens", "requestBytes", "responseBytes", "tokenField", "thinking", "items", "source", "context", "translated", "calls", "service", "workspace");
+        else keys(encoded, "endpoint", "model", "tokens", "requestBytes", "responseBytes", "tokenField", "thinking", "items", "source", "context", "translated", "calls");
         CaptionConnection connection = new CaptionConnection(new ChatCompletionAdapter.Config(required(encoded, "endpoint"), required(encoded, "model"),
                 number(encoded, "tokens"), number(encoded, "requestBytes"), number(encoded, "responseBytes"),
-                ChatCompletionAdapter.TokenField.valueOf(required(encoded, "tokenField")), ChatCompletionAdapter.Thinking.valueOf(required(encoded, "thinking"))),
+                ChatCompletionAdapter.TokenField.valueOf(required(encoded, "tokenField")), ChatCompletionAdapter.Thinking.valueOf(required(encoded, "thinking")),
+                nativeService ? CaptionService.valueOf(required(encoded, "service")) : CaptionService.CUSTOM_CHAT,
+                nativeService && !encoded.isNull("workspace") ? required(encoded, "workspace") : null),
                 new TranslationBatch.Limits(number(encoded, "items"), number(encoded, "source"), number(encoded, "context"), number(encoded, "translated")), number(encoded, "calls"));
         String encrypted = object.isNull("secret") ? null : required(object, "secret");
         String key = null;
@@ -235,10 +239,15 @@ public final class CaptionConnectionStore {
     private String binding(String config, long revision) { return mNamespace + "\n" + revision + "\n" + config; }
     private static JSONObject config(CaptionConnection c) {
         try {
-            return new JSONObject().put("endpoint", c.wire.endpoint.toString()).put("model", c.wire.model).put("tokens", c.wire.maxOutputTokens)
+            JSONObject result = new JSONObject().put("endpoint", c.wire.endpoint.toString()).put("model", c.wire.model).put("tokens", c.wire.maxOutputTokens)
                     .put("requestBytes", c.wire.requestBytes).put("responseBytes", c.wire.responseBytes).put("tokenField", c.wire.tokenField.name())
                     .put("thinking", c.wire.thinking.name()).put("items", c.batch.items).put("source", c.batch.sourceCodePoints)
                     .put("context", c.batch.contextCodePoints).put("translated", c.batch.translatedCodePoints).put("calls", c.maxCalls);
+            // Preserve the exact legacy serialization used as authenticated Key binding.
+            if (c.wire.service != CaptionService.CUSTOM_CHAT || c.wire.workspaceId != null) {
+                result.put("service", c.wire.service.name()).put("workspace", c.wire.workspaceId == null ? JSONObject.NULL : c.wire.workspaceId);
+            }
+            return result;
         } catch (JSONException ignored) { throw TranslationBatch.invalid(); }
     }
     static boolean validKey(String key) {

@@ -17,7 +17,7 @@ import okhttp3.HttpUrl;
 /** Chat wire/completion and item validation. Does not send requests or infer model capabilities. */
 public final class ChatCompletionAdapter {
     public enum TokenField { MAX_TOKENS, MAX_COMPLETION_TOKENS }
-    public enum Thinking { OMIT, DEEPSEEK_DISABLED }
+    public enum Thinking { OMIT, DEEPSEEK_DISABLED, AUTO_LOW }
     public enum State { COMPLETE, PARTIAL, TRUNCATED, REFUSED, FILTERED, FAILED, UNKNOWN, INVALID }
 
     public static final class Config {
@@ -28,16 +28,34 @@ public final class ChatCompletionAdapter {
         public final int responseBytes;
         public final TokenField tokenField;
         public final Thinking thinking;
+        public final CaptionService service;
+        public final String workspaceId;
 
-        /** Full HTTPS completion endpoint; no credentials in URL and no implicit /v1 suffix. */
+        /** Legacy Chat connections retain their original protocol and explicit thinking choice. */
         public Config(String endpoint, String model, int maxOutputTokens, int requestBytes, int responseBytes,
                       TokenField tokenField, Thinking thinking) {
+            this(endpoint, model, maxOutputTokens, requestBytes, responseBytes, tokenField, thinking, CaptionService.CUSTOM_CHAT, null);
+        }
+
+        /** Full HTTPS endpoint; Gemini also accepts a models base URL and appends the selected model. */
+        public Config(String endpoint, String model, int maxOutputTokens, int requestBytes, int responseBytes,
+                      TokenField tokenField, Thinking thinking, CaptionService service, String workspaceId) {
             HttpUrl url = endpoint == null ? null : HttpUrl.parse(endpoint);
             if (url == null || !"https".equals(url.scheme()) || !url.username().isEmpty() || !url.password().isEmpty() ||
                     url.query() != null || url.fragment() != null || model == null || model.trim().isEmpty() ||
                     model.length() > 256 || !TranslationBatch.validText(model) || maxOutputTokens <= 0 || maxOutputTokens > 1048576 ||
                     requestBytes <= 0 || requestBytes > 1024 * 1024 || responseBytes <= 0 || responseBytes > 1024 * 1024 ||
-                    tokenField == null || thinking == null) throw TranslationBatch.invalid();
+                    tokenField == null || thinking == null || service == null ||
+                    thinking == Thinking.DEEPSEEK_DISABLED && service != CaptionService.CUSTOM_CHAT && service != CaptionService.DEEPSEEK ||
+                    workspaceId != null && (service != CaptionService.CLAUDE || !workspaceId.matches("[A-Za-z0-9_-]{1,128}"))) {
+                throw TranslationBatch.invalid();
+            }
+            if (service == CaptionService.GEMINI) {
+                if (!model.matches("[A-Za-z0-9._-]+")) throw TranslationBatch.invalid();
+                String path = url.encodedPath();
+                boolean full = path.endsWith("/models/" + model + ":generateContent");
+                if (!full && !path.endsWith("/models") && !path.endsWith("/models/")) throw TranslationBatch.invalid();
+            }
             this.endpoint = url;
             this.model = model;
             this.maxOutputTokens = maxOutputTokens;
@@ -45,6 +63,18 @@ public final class ChatCompletionAdapter {
             this.responseBytes = responseBytes;
             this.tokenField = tokenField;
             this.thinking = thinking;
+            this.service = service;
+            this.workspaceId = workspaceId;
+        }
+
+        public boolean sameCredentialTarget(Config other) {
+            return other != null && endpoint.equals(other.endpoint) && service == other.service &&
+                    (workspaceId == null ? other.workspaceId == null : workspaceId.equals(other.workspaceId));
+        }
+
+        HttpUrl requestEndpoint() {
+            return service == CaptionService.GEMINI && !endpoint.encodedPath().endsWith(":generateContent") ?
+                    endpoint.newBuilder().addPathSegment(model + ":generateContent").build() : endpoint;
         }
     }
 
@@ -85,12 +115,7 @@ public final class ChatCompletionAdapter {
                 items.put(new JSONObject().put("id", item.id).put("source", item.source).put("context", item.context));
             }
             input.put("items", items);
-            JSONArray messages = new JSONArray();
-            messages.put(new JSONObject().put("role", "system").put("content", SYSTEM));
-            messages.put(new JSONObject().put("role", "user").put("content", input.toString()));
-            JSONObject body = new JSONObject().put("model", config.model).put("messages", messages).put("stream", false);
-            body.put(config.tokenField == TokenField.MAX_TOKENS ? "max_tokens" : "max_completion_tokens", config.maxOutputTokens);
-            if (config.thinking == Thinking.DEEPSEEK_DISABLED) body.put("thinking", new JSONObject().put("type", "disabled"));
+            JSONObject body = CaptionProtocolAdapter.encode(config, SYSTEM, input.toString(), config.maxOutputTokens);
             byte[] encoded = body.toString().getBytes(UTF8);
             if (encoded.length > config.requestBytes) throw TranslationBatch.invalid();
             return encoded;
@@ -106,25 +131,9 @@ public final class ChatCompletionAdapter {
             String json = UTF8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(response)).toString();
             JSONObject envelope = BoundedJson.object(json);
-            JSONArray choices = envelope.optJSONArray("choices");
-            if (choices == null || choices.length() != 1) return empty(batch, State.INVALID);
-            JSONObject choice = choices.optJSONObject(0);
-            JSONObject message = choice == null ? null : choice.optJSONObject("message");
-            if (message == null) return empty(batch, State.INVALID);
-            Object refusal = message.opt("refusal");
-            if (refusal != null && refusal != JSONObject.NULL && !"".equals(refusal)) return empty(batch, State.REFUSED);
-            String reason = BoundedJson.string(choice, "finish_reason");
-            if (!"stop".equals(reason)) {
-                State state = "length".equals(reason) ? State.TRUNCATED :
-                        "content_filter".equals(reason) ? State.FILTERED :
-                        "tool_calls".equals(reason) || "function_call".equals(reason) || "aborted".equals(reason) ||
-                                "insufficient_system_resource".equals(reason) ? State.FAILED : State.UNKNOWN;
-                return empty(batch, state);
-            }
-            if (message.has("tool_calls") && !message.isNull("tool_calls") ||
-                    message.has("function_call") && !message.isNull("function_call")) return empty(batch, State.FAILED);
-            String content = BoundedJson.string(message, "content"); // Never concatenate reasoning_content.
-            if (content == null) return empty(batch, State.INVALID);
+            CaptionProtocolAdapter.Text reply = CaptionProtocolAdapter.decode(config, envelope);
+            if (reply.state != State.COMPLETE) return empty(batch, reply.state);
+            String content = reply.content;
             JSONObject output = BoundedJson.object(content);
             JSONArray translations = output.optJSONArray("translations");
             if (output.length() != 1 || translations == null || translations.length() > batch.getItems().size()) {

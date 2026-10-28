@@ -9,15 +9,35 @@
     <string name="caption_ai_translation_first">Bilingual: translation above original</string>
     <string name="caption_ai_translation_only">Translation only</string>
     <string name="caption_ai_connection">Model connection (global)</string>
-    <string name="caption_ai_endpoint">Full HTTPS chat/completions endpoint</string>
+    <string name="caption_ai_service">Platform / API protocol</string>
+    <string name="caption_ai_service_custom">Custom Chat Completions</string>
+    <string name="caption_ai_service_openai_chat">OpenAI · Chat Completions</string>
+    <string name="caption_ai_service_openai_responses">OpenAI · Responses</string>
+    <string name="caption_ai_service_deepseek">DeepSeek · Chat Completions</string>
+    <string name="caption_ai_service_claude">Claude · Messages</string>
+    <string name="caption_ai_service_gemini">Gemini · native API</string>
+    <string name="caption_ai_service_hint">Changing platform resets thinking to automatic low. It fills the endpoint only when blank or still the previous platform default; it never chooses or replaces a model ID.</string>
+    <string name="caption_ai_endpoint">HTTPS API endpoint</string>
+    <string name="caption_ai_gemini_endpoint_hint">Gemini: enter the models base URL (for example https://generativelanguage.googleapis.com/v1beta/models), or a full /models/MODEL:generateContent URL matching the model ID below.</string>
     <string name="caption_ai_model">Model ID</string>
+    <string name="caption_ai_workspace">Claude workspace ID (optional)</string>
+    <string name="caption_ai_workspace_hint">Claude only: letters, digits, _ or -, up to 128 characters. Leave blank to omit the workspace header.</string>
     <string name="caption_ai_key_hint">New API Key (leave blank to keep the saved Key)</string>
     <string name="caption_ai_output_tokens">Maximum output tokens</string>
-    <string name="caption_ai_deepseek_thinking">Disable thinking (supported DeepSeek models only)</string>
-    <string name="caption_ai_connection_notice">Saving does not test the service. Enabling channel translation sends subtitle text to this address and may incur charges. Changing the address requires a new Key or explicit Key removal.</string>
+    <string name="caption_ai_thinking">Thinking request policy</string>
+    <string name="caption_ai_thinking_auto">Automatic: off or lowest supported</string>
+    <string name="caption_ai_thinking_default">Provider default (no extra parameter)</string>
+    <string name="caption_ai_deepseek_thinking">Manual DeepSeek disabled (compatible models only)</string>
+    <string name="caption_ai_policy_default">No thinking control parameter will be added.</string>
+    <string name="caption_ai_policy_unknown">Unknown platform/model policy: automatic mode adds no thinking control parameter.</string>
+    <string name="caption_ai_policy_disabled">Request policy: ask the service to disable thinking.</string>
+    <string name="caption_ai_policy_low">Request policy: ask the service for low thinking effort.</string>
+    <string name="caption_ai_policy_budget">Request policy: ask the service for a 128-token thinking budget.</string>
+    <string name="caption_ai_thinking_notice">These are request parameters, not proof of zero reasoning or cost. Automatic mode uses known model rules; unknown models keep provider defaults. Manual DeepSeek disabled is available only for Custom Chat and DeepSeek.</string>
+    <string name="caption_ai_connection_notice">Saving does not test the service. Enabling channel translation sends subtitle text to this address and may incur charges. Changing the address, platform or workspace requires a new Key or explicit Key removal.</string>
     <string name="caption_ai_clear_key">Remove saved Key</string>
     <string name="caption_ai_clear_key_confirm">Remove the Key for this user profile? The model connection remains, but translation cannot send new requests without a Key.</string>
-    <string name="caption_ai_invalid_connection">Check the HTTPS endpoint, model, token limit and Key. A Key must not contain spaces or line breaks.</string>
+    <string name="caption_ai_invalid_connection">Check the platform, HTTPS endpoint, model, token limit, optional Claude workspace and Key. A Key must not contain spaces or line breaks.</string>
     <string name="caption_ai_invalid_language">Enter a language code, for example en, fr or zh-Hans.</string>
     <string name="caption_ai_loading">Loading subtitle settings…</string>
     <string name="caption_ai_saving">Saving…</string>
@@ -39,6 +59,10 @@
     <string name="caption_pairing_address">Current local address: %1$s</string>
     <string name="caption_pairing_no_network">No supported private Wi-Fi or Ethernet address is available. Check the network and app permissions, then reopen. VPN, mobile data and isolated guest networks cannot be used. You can still use the native connection form.</string>
     <string name="caption_pairing_unavailable">Phone pairing could not start. Reopen this window or use the native connection form.</string>
+    <item name="caption_ai_service" type="id" />
+    <item name="caption_ai_workspace" type="id" />
+    <item name="caption_ai_workspace_fields" type="id" />
+    <item name="caption_ai_thinking_policy" type="id" />
     <item name="caption_ai_endpoint" type="id" />
     <item name="caption_ai_model" type="id" />
     <item name="caption_ai_key" type="id" />

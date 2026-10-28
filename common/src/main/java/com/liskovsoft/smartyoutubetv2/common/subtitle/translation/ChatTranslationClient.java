@@ -15,6 +15,7 @@ import okhttp3.OkHttpClient;
 public final class ChatTranslationClient {
     public enum Status { COMPLETE, INCOMPLETE, AUTH_ERROR, RATE_LIMITED, HTTP_ERROR, NETWORK_ERROR, CANCELLED, INVALID }
     public interface Credentials { String getKey(); }
+    interface NanoClock { long nanoTime(); }
 
     public static final class Result {
         public final TranslationBatch batch;
@@ -68,6 +69,8 @@ public final class ChatTranslationClient {
                 if (mExecuted) throw new IllegalStateException("Caption translation job already executed");
                 mExecuted = true;
             }
+            long started = mNanoClock.nanoTime();
+            long budget = TimeUnit.MILLISECONDS.toNanos(mTransport.callTimeoutMs());
             Map<String, String> translations = new LinkedHashMap<>();
             Deque<TranslationBatch> pending = new ArrayDeque<>();
             if (!mBatch.getItems().isEmpty()) pending.add(mBatch);
@@ -91,7 +94,10 @@ public final class ChatTranslationClient {
                 }
                 ChatCompletionAdapter.Result decoded;
                 try {
-                    CaptionHttpTransport.Exchange exchange = mTransport.exchange(mConfig, mCredentials, body);
+                    long remainingMs = TimeUnit.NANOSECONDS.toMillis(budget - (mNanoClock.nanoTime() - started));
+                    if (remainingMs <= 0) { status = Status.NETWORK_ERROR; break; }
+                    CaptionHttpTransport.Exchange exchange = mTransport.withCallTimeout(remainingMs)
+                            .exchange(mConfig, mCredentials, body);
                     synchronized (this) {
                         if (mCancelled) { status = Status.CANCELLED; break; }
                         mExchange = exchange;
@@ -149,6 +155,7 @@ public final class ChatTranslationClient {
     }
 
     private final CaptionHttpTransport mTransport;
+    private final NanoClock mNanoClock;
 
     public ChatTranslationClient() {
         this(new OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
@@ -157,7 +164,13 @@ public final class ChatTranslationClient {
 
     // Test transport injection stays package-local; production does not inherit logging interceptors.
     ChatTranslationClient(OkHttpClient client) {
+        this(client, System::nanoTime);
+    }
+
+    ChatTranslationClient(OkHttpClient client, NanoClock clock) {
+        if (clock == null) throw TranslationBatch.invalid();
         mTransport = new CaptionHttpTransport(client);
+        mNanoClock = clock;
     }
 
     CaptionHttpTransport transport() { return mTransport; }

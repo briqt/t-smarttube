@@ -3,6 +3,18 @@
 This log covers the enhancement fork. Upstream release history remains available
 in [SmartTube releases](https://github.com/yuliskov/SmartTube/releases).
 
+## Enhancement revision 1
+
+- Keep valid in-flight translation and prefetch through ordinary native-caption gaps without reviving cleared captions.
+- Bound complete translation jobs by an overall deadline and preserve shorter connection-test deadlines.
+- Respect numeric and HTTP-date Retry-After for rate limits and service-unavailable responses, including source/configuration changes.
+- Add explicit OpenAI Chat/Responses, DeepSeek, Claude Messages, Gemini GenerateContent and custom Chat connections.
+- Add conservative exact-model automatic low-thinking rules and request-policy feedback, preserving provider-default and manual compatible DeepSeek choices.
+- Preserve legacy connection/Key bindings and require explicit Key replacement or removal when changing endpoint, service or workspace.
+- Extend native and phone connection forms without adding a second subtitle settings system.
+
+New service protocols are covered by synthetic contract tests; real-service access, model availability and device compatibility still require their own checks.
+
 ## Initial enhancement revision
 
 - Add channel-level AI subtitle enablement and global target-language/display settings through the native subtitle menu.

@@ -16,6 +16,21 @@ the upstream download links in the preserved documentation below install the ori
 The pairing page uses **unencrypted local HTTP**. Use it only on a trusted home network and close it when finished.
 API keys are not included in APKs or returned by the pairing page. Provider charges and model compatibility are the user's responsibility.
 
+## Model connections — enhancement revision t1
+
+These features are part of enhancement revision `t1`; earlier `t0` APKs do not include them.
+
+- Choose an explicit service/protocol: **OpenAI Chat Completions**, **OpenAI Responses**, **DeepSeek**, **Claude Messages**, **Gemini GenerateContent**, or **custom Chat Completions**. A different URL does not automatically change the protocol.
+- Enter your own model ID and HTTPS endpoint. Platform suggestions do not select a model or verify account access. Gemini accepts a `/models` base URL, or a full `:generateContent` URL matching the configured model. Claude supports an optional workspace ID.
+- New connections default to **automatic low thinking**. The rule set requests thinking off where documented, otherwise a supported low effort or minimum budget. Unknown model IDs and custom Chat connections receive no automatic thinking-control parameter. You can choose provider defaults; the explicit manual DeepSeek control is retained for compatible Chat models.
+- Automatic rules match conservative, exact model IDs, not every model name or snapshot. See [the current rule set](common/src/main/java/com/liskovsoft/smartyoutubetv2/common/subtitle/translation/CaptionModelPolicy.java). A requested control or omitted reasoning text is not proof of zero internal reasoning or zero reasoning charges.
+- Existing connections keep their protocol, thinking choice and stored Key. Changing the endpoint, service or workspace requires replacing or explicitly clearing the Key; it is never silently forwarded to a new target.
+- The phone connection test makes one small synthetic request without saving: normally at most 64 output tokens, or 256 for a known minimum thinking budget, additionally limited by your configured cap. A successful test is not a translation-quality or zero-thinking guarantee.
+
+When channel translation is enabled, caption text and bounded neighboring caption context are sent directly to the configured model service. Audio is not uploaded. Provider processing and retention depend on that service's policies. Removing the connection removes its saved connection details and Key; the separate display preferences remain. The preserved `PRIVACY.md` applies only to upstream's F-Droid build, not to these fork-specific model connections.
+
+The new protocols have synthetic request/response and credential-storage coverage. They have not all been exercised against real services or on every Android/TV device.
+
 ## Installation and updates
 
 | Channel | Application ID |

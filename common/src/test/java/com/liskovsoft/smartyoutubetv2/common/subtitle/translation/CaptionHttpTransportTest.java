@@ -96,6 +96,46 @@ public class CaptionHttpTransportTest {
     }
 
     @Test
+    public void translationCallsHaveAnOverallTimeoutWithoutWeakeningShorterDeadlines() throws Exception {
+        Field field = CaptionHttpTransport.class.getDeclaredField("mClient");
+        field.setAccessible(true);
+        for (int configured : new int[]{0, 8000, 120000}) {
+            CaptionHttpTransport transport = new CaptionHttpTransport(new OkHttpClient.Builder()
+                    .callTimeout(configured, TimeUnit.MILLISECONDS).build());
+            OkHttpClient client = (OkHttpClient) field.get(transport);
+            assertEquals(configured == 8000 ? 8000 : 45000, client.callTimeoutMillis());
+        }
+    }
+
+    @Test
+    public void retryAfterIsPreservedForServiceUnavailableAndHttpDates() {
+        java.text.SimpleDateFormat format = new java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US);
+        format.setTimeZone(java.util.TimeZone.getTimeZone("GMT"));
+        String future = format.format(new java.util.Date(System.currentTimeMillis() + 120000));
+        for (int code : new int[]{429, 503}) {
+            for (String header : new String[]{"120", future}) {
+                CaptionHttpTransport transport = new CaptionHttpTransport(new OkHttpClient.Builder().addInterceptor(chain ->
+                        response(chain.request(), code, "{}", header)).build());
+                CaptionHttpTransport.Result result = transport.exchange(CONFIG, () -> "synthetic-key", new byte[]{1}).execute();
+                assertNotNull("Retry-After must survive HTTP " + code + " and date syntax", result.retryAfterMs);
+                assertTrue(result.retryAfterMs >= 118000 && result.retryAfterMs <= 120000);
+            }
+        }
+    }
+
+    @Test
+    public void retryAfterDatesNumbersAndInvalidValuesStayBounded() {
+        long before = 1445412360000L;
+        assertEquals(Long.valueOf(120000), CaptionHttpTransport.retryAfter("Wed, 21 Oct 2015 07:28:00 GMT", before));
+        assertEquals(Long.valueOf(0), CaptionHttpTransport.retryAfter("Wed, 21 Oct 2015 07:28:00 GMT", before + 120000));
+        assertEquals(Long.valueOf(0), CaptionHttpTransport.retryAfter("0", before));
+        assertEquals(Long.valueOf(3_600_000), CaptionHttpTransport.retryAfter("99999999999999999999999", before));
+        for (String invalid : new String[]{null, "", "-1", "1.5", "tomorrow", "Wed, 32 Oct 2015 07:28:00 GMT"}) {
+            assertNull(CaptionHttpTransport.retryAfter(invalid, before));
+        }
+    }
+
+    @Test
     public void responseBytesAreBoundedAndTransportExceptionsHaveNoBodyOrMessageLeak() {
         CaptionHttpTransport huge = new CaptionHttpTransport(new OkHttpClient.Builder().addInterceptor(chain ->
                 response(chain.request(), 200, new String(new char[1025]).replace('\0', 'x'), null)).build());

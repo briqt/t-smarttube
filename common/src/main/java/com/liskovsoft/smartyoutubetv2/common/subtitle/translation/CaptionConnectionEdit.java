@@ -53,13 +53,21 @@ public final class CaptionConnectionEdit {
             keys(body, "version", "revision", "operation");
             return new CaptionConnectionEdit(operation, revision, null, null, null);
         }
-        keys(body, "version", "revision", "operation", "endpoint", "model", "tokens", "thinking", "keyEdit", "key");
+        boolean explicitService = body.has("service") || body.has("workspace");
+        if (explicitService) keys(body, "version", "revision", "operation", "endpoint", "model", "tokens", "thinking", "keyEdit", "key", "service", "workspace");
+        else keys(body, "version", "revision", "operation", "endpoint", "model", "tokens", "thinking", "keyEdit", "key");
         String endpoint = required(body, "endpoint").trim();
         String model = required(body, "model").trim();
         if (endpoint.length() > 4096) throw TranslationBatch.invalid();
         ChatCompletionAdapter.Thinking thinking;
+        CaptionService service;
+        String workspace = explicitService ? body.isNull("workspace") ? null : required(body, "workspace").trim() :
+                previous == null ? null : previous.wire.workspaceId;
+        if (workspace != null && workspace.isEmpty()) workspace = null;
         CaptionConnectionStore.KeyEdit edit;
         try {
+            service = explicitService ? CaptionService.valueOf(required(body, "service")) :
+                    previous == null ? CaptionService.CUSTOM_CHAT : previous.wire.service;
             thinking = ChatCompletionAdapter.Thinking.valueOf(required(body, "thinking"));
             edit = CaptionConnectionStore.KeyEdit.valueOf(required(body, "keyEdit"));
         } catch (IllegalArgumentException ignored) { throw TranslationBatch.invalid(); }
@@ -70,11 +78,11 @@ public final class CaptionConnectionEdit {
         CaptionConnection connection;
         int tokens = integer(body, "tokens");
         if (previous == null) {
-            connection = CaptionConnection.basic(endpoint, model, tokens, thinking);
+            connection = CaptionConnection.basic(endpoint, model, tokens, thinking, service, workspace);
         } else {
             ChatCompletionAdapter.Config before = previous.wire;
             connection = new CaptionConnection(new ChatCompletionAdapter.Config(endpoint, model, tokens,
-                    before.requestBytes, before.responseBytes, before.tokenField, thinking), previous.batch, previous.maxCalls);
+                    before.requestBytes, before.responseBytes, before.tokenField, thinking, service, workspace), previous.batch, previous.maxCalls);
         }
         return new CaptionConnectionEdit(operation, revision, connection, edit, replacement);
     }
@@ -88,7 +96,7 @@ public final class CaptionConnectionEdit {
         if (keyEdit == CaptionConnectionStore.KeyEdit.REPLACE) {
             return mReplacement == null ? null : this::replacement;
         }
-        if (saved == null || saved.connection == null || !saved.connection.wire.endpoint.equals(connection.wire.endpoint)) return null;
+        if (saved == null || saved.connection == null || !saved.connection.wire.sameCredentialTarget(connection.wire)) return null;
         TranslationCoordinator.Profile profile = saved.profile(target);
         return profile == null ? null : () -> mDiscarded ? null : profile.credentials.getKey();
     }
@@ -102,7 +110,9 @@ public final class CaptionConnectionEdit {
             if (connection == null) body.put("connection", JSONObject.NULL);
             else body.put("connection", new JSONObject().put("endpoint", connection.wire.endpoint.toString())
                     .put("model", connection.wire.model).put("tokens", connection.wire.maxOutputTokens)
-                    .put("thinking", connection.wire.thinking.name()));
+                    .put("thinking", connection.wire.thinking.name()).put("service", connection.wire.service.name())
+                    .put("workspace", connection.wire.workspaceId == null ? JSONObject.NULL : connection.wire.workspaceId)
+                    .put("thinkingPolicy", CaptionModelPolicy.decision(connection.wire.service, connection.wire.model, connection.wire.thinking).name()));
             return body.toString();
         } catch (JSONException ignored) { throw TranslationBatch.invalid(); }
     }

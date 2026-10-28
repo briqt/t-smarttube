@@ -4,6 +4,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.ProtocolException;
+import java.text.ParsePosition;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import okhttp3.Authenticator;
@@ -54,8 +59,13 @@ final class CaptionHttpTransport {
         OkHttpClient.Builder builder = client.newBuilder().followRedirects(false).followSslRedirects(false)
                 .retryOnConnectionFailure(false).authenticator(Authenticator.NONE).proxyAuthenticator(Authenticator.NONE);
         if (!builder.networkInterceptors().contains(WIRE_GUARD)) builder.addNetworkInterceptor(WIRE_GUARD);
+        if (client.callTimeoutMillis() == 0 || client.callTimeoutMillis() > 45000) {
+            builder.callTimeout(45000, TimeUnit.MILLISECONDS);
+        }
         mClient = builder.build();
     }
+
+    int callTimeoutMs() { return mClient.callTimeoutMillis(); }
 
     CaptionHttpTransport withCallTimeout(long milliseconds) {
         if (milliseconds <= 0 || milliseconds > 45000) throw TranslationBatch.invalid();
@@ -102,9 +112,11 @@ final class CaptionHttpTransport {
                 if (key == null || key.isEmpty() || key.length() > 8192 || !headerSafe(key)) {
                     return new Result(cancelled() ? Status.CANCELLED : Status.AUTH_ERROR, null, 0, 0, null);
                 }
-                Request request = new Request.Builder().url(mConfig.endpoint).header("Authorization", "Bearer " + key)
+                Request.Builder requestBuilder = new Request.Builder().url(mConfig.requestEndpoint())
                         .header("Accept", "application/json").tag(WireBudget.class, new WireBudget())
-                        .post(RequestBody.create(MediaType.parse("application/json; charset=utf-8"), mBody)).build();
+                        .post(RequestBody.create(MediaType.parse("application/json; charset=utf-8"), mBody));
+                CaptionProtocolAdapter.authorize(mConfig, requestBuilder, key);
+                Request request = requestBuilder.build();
                 Call call = mClient.newCall(request);
                 synchronized (this) {
                     if (mCancelled) return new Result(Status.CANCELLED, null, 0, 0, null);
@@ -114,7 +126,10 @@ final class CaptionHttpTransport {
                 try (Response response = call.execute()) {
                     code = response.code();
                     if (code == 401 || code == 403) status = Status.AUTH_ERROR;
-                    else if (code == 429) { status = Status.RATE_LIMITED; retryAfter = retryAfter(response.header("Retry-After")); }
+                    else if (code == 429 || code == 503) {
+                        status = code == 429 ? Status.RATE_LIMITED : Status.HTTP_ERROR;
+                        retryAfter = retryAfter(response.header("Retry-After"), System.currentTimeMillis());
+                    }
                     else if (!response.isSuccessful()) status = Status.HTTP_ERROR;
                     else { bytes = read(response.body(), mConfig.responseBytes); status = Status.RECEIVED; }
                 }
@@ -147,9 +162,25 @@ final class CaptionHttpTransport {
         for (int i = 0; i < key.length(); i++) if (key.charAt(i) <= 32 || key.charAt(i) >= 127) return false;
         return true;
     }
-    private static Long retryAfter(String value) {
-        if (value == null || value.isEmpty() || value.length() > 6) return null;
-        for (int i = 0; i < value.length(); i++) if (value.charAt(i) < '0' || value.charAt(i) > '9') return null;
-        return Math.min(Long.parseLong(value), 3600) * 1000L;
+    static Long retryAfter(String value, long nowMs) {
+        if (value == null || value.length() > 128) return null;
+        value = value.trim();
+        if (value.isEmpty()) return null;
+        long seconds = 0;
+        boolean numeric = true;
+        for (int i = 0; i < value.length(); i++) {
+            char digit = value.charAt(i);
+            if (digit < '0' || digit > '9') { numeric = false; break; }
+            seconds = Math.min(3600, seconds * 10 + digit - '0');
+        }
+        if (numeric) return seconds * 1000;
+        if (value.length() != 29) return null;
+        SimpleDateFormat format = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US);
+        format.setTimeZone(TimeZone.getTimeZone("GMT"));
+        format.setLenient(false);
+        ParsePosition position = new ParsePosition(0);
+        Date date = format.parse(value, position);
+        if (date == null || position.getIndex() != value.length()) return null;
+        return date.getTime() <= nowMs ? 0L : Math.min(date.getTime() - nowMs, 3_600_000L);
     }
 }

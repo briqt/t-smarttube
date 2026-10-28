@@ -136,7 +136,8 @@ public final class CaptionOutputBridge {
         mStamp = CaptionCueDispatcher.stampOf(raw);
         mRaw = raw == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(raw));
         mNative = normalized == null ? Collections.emptyList() : normalized;
-        mWindow = mRaw.isEmpty() ? null : new Object();
+        // A native cue gap clears presentation, not the admitted same-track input or its prefetch.
+        if (!mRaw.isEmpty()) mWindow = new Object();
         refresh();
     }
 

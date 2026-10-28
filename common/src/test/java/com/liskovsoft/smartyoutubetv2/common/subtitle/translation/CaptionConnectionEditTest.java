@@ -35,6 +35,25 @@ public class CaptionConnectionEditTest {
         } finally { edit.discard(); }
     }
 
+    @Test public void nativeServiceAndWorkspaceAreExplicitWhileLegacyFormsKeepTheirExistingProtocol() throws Exception {
+        CaptionConnectionEdit nativeEdit = parse(form().put("service", "CLAUDE").put("workspace", "wrkspc_fixture")
+                .put("model", "claude-opus-5-5").put("thinking", "AUTO_LOW"), null);
+        try {
+            assertEquals(CaptionService.CLAUDE, nativeEdit.connection.wire.service);
+            assertEquals("wrkspc_fixture", nativeEdit.connection.wire.workspaceId);
+            assertEquals(CaptionModelPolicy.Decision.LOW, CaptionModelPolicy.decision(nativeEdit.connection.wire.service,
+                    nativeEdit.connection.wire.model, nativeEdit.connection.wire.thinking));
+            CaptionConnectionEdit legacy = parse(form(), nativeEdit.connection);
+            try {
+                assertEquals(CaptionService.CLAUDE, legacy.connection.wire.service);
+                assertEquals("wrkspc_fixture", legacy.connection.wire.workspaceId);
+            } finally { legacy.discard(); }
+        } finally { nativeEdit.discard(); }
+        rejected(form().put("service", "CLAUDE").toString());
+        rejected(form().put("service", "CLAUDE").put("workspace", "bad\nheader").toString());
+        rejected(form().put("service", "unknown").put("workspace", JSONObject.NULL).toString());
+    }
+
     @Test public void replacementIsTransientAndDiscardRevokesTheTestCredential() throws Exception {
         CaptionConnectionEdit edit = parse(form().put("operation", "test"), null);
         ChatTranslationClient.Credentials credential = edit.testCredentials(null, "zh");

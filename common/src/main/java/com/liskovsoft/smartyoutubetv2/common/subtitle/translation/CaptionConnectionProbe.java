@@ -33,9 +33,10 @@ public final class CaptionConnectionProbe {
         TranslationBatch batch = new TranslationBatch(plan, Collections.singletonList(0), "en", target, "",
                 new TranslationBatch.Limits(1, 128, 0, 256));
         ChatCompletionAdapter.Config wire = edit.connection.wire;
+        int outputLimit = CaptionModelPolicy.decision(wire.service, wire.model, wire.thinking) == CaptionModelPolicy.Decision.BUDGET_128 ? 256 : 64;
         ChatCompletionAdapter.Config probe = new ChatCompletionAdapter.Config(wire.endpoint.toString(), wire.model,
-                Math.min(64, wire.maxOutputTokens), Math.min(8192, wire.requestBytes), Math.min(8192, wire.responseBytes),
-                wire.tokenField, wire.thinking);
+                Math.min(outputLimit, wire.maxOutputTokens), Math.min(8192, wire.requestBytes), Math.min(8192, wire.responseBytes),
+                wire.tokenField, wire.thinking, wire.service, wire.workspaceId);
         return client.newJob(batch, probe, credentials, 1);
     }
 

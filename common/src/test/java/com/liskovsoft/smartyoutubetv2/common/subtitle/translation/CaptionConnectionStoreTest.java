@@ -126,6 +126,63 @@ public class CaptionConnectionStoreTest {
     }
 
     @Test
+    public void legacyCipherBindingLoadsWithoutInventingProviderFieldsOrRewritingTheKey() throws Exception {
+        SharedPreferences preferences = freshPreferences();
+        JceCipher cipher = new JceCipher();
+        JSONObject legacy = new JSONObject().put("endpoint", ENDPOINT).put("model", "synthetic-model").put("tokens", 1024)
+                .put("requestBytes", 262144).put("responseBytes", 262144).put("tokenField", "MAX_TOKENS").put("thinking", "OMIT")
+                .put("items", 12).put("source", 6000).put("context", 2000).put("translated", 12000).put("calls", 2);
+        String encrypted = cipher.seal(KEY_A, NAMESPACE + "\n7\n" + legacy.toString());
+        String original = new JSONObject().put("version", 1).put("revision", "7").put("config", legacy).put("secret", encrypted).toString();
+        assertTrue(preferences.edit().putString(DATA, original).commit());
+        CaptionConnectionStore.Snapshot loaded = store(preferences, cipher).load();
+        assertTrue(loaded.valid);
+        assertTrue(loaded.persistentKey);
+        assertEquals(KEY_A, loaded.profile("zh").credentials.getKey());
+        assertEquals(CaptionService.CUSTOM_CHAT, loaded.connection.wire.service);
+        assertEquals(ChatCompletionAdapter.Thinking.OMIT, loaded.connection.wire.thinking);
+        assertEquals(original, raw(preferences));
+    }
+
+    @Test
+    public void nativeProviderWorkspaceAndThinkingSurviveFreshAuthenticatedReload() throws Exception {
+        for (CaptionService service : CaptionService.values()) {
+            SharedPreferences preferences = freshPreferences();
+            JceCipher cipher = new JceCipher();
+            CaptionConnectionStore owner = store(preferences, cipher);
+            ChatCompletionAdapter.Config wire = CaptionProviderProtocolTest.wire(service, "synthetic-model", ChatCompletionAdapter.Thinking.AUTO_LOW);
+            CaptionConnection connection = new CaptionConnection(wire, connection().batch, 2);
+            CaptionConnectionStore.Snapshot saved = owner.save(owner.load(), connection, CaptionConnectionStore.KeyEdit.REPLACE, KEY_A);
+            assertNotNull(saved);
+            owner.close();
+            CaptionConnectionStore.Snapshot loaded = store(copiedPreferences(preferences), new JceCipher(cipher.key)).load();
+            assertTrue(loaded.valid);
+            assertTrue(loaded.persistentKey);
+            assertEquals(service, loaded.connection.wire.service);
+            assertEquals(wire.workspaceId, loaded.connection.wire.workspaceId);
+            assertEquals(ChatCompletionAdapter.Thinking.AUTO_LOW, loaded.connection.wire.thinking);
+            assertEquals(KEY_A, loaded.profile("zh").credentials.getKey());
+            assertNoPlaintext(preferences);
+        }
+    }
+
+    @Test
+    public void changedProtocolCannotReuseAStoredKeyEvenWhenTheEndpointIsIdentical() throws Exception {
+        SharedPreferences preferences = freshPreferences();
+        CaptionConnectionStore owner = store(preferences, new JceCipher());
+        CaptionConnectionStore.Snapshot saved = saveKey(owner, KEY_A);
+        CaptionConnection changed = CaptionConnection.basic(ENDPOINT, "synthetic-model", 1024, ChatCompletionAdapter.Thinking.AUTO_LOW,
+                CaptionService.CLAUDE, "wrkspc_fixture");
+        assertNull(owner.save(saved, changed, CaptionConnectionStore.KeyEdit.KEEP, null));
+        CaptionConnectionStore.Snapshot replaced = owner.save(saved, changed, CaptionConnectionStore.KeyEdit.REPLACE, KEY_B);
+        assertNotNull(replaced);
+        assertEquals(KEY_B, replaced.profile("zh").credentials.getKey());
+        CaptionConnection workspace = CaptionConnection.basic(ENDPOINT, "synthetic-model", 1024, ChatCompletionAdapter.Thinking.AUTO_LOW,
+                CaptionService.CLAUDE, "wrkspc_other");
+        assertNull(owner.save(replaced, workspace, CaptionConnectionStore.KeyEdit.KEEP, null));
+    }
+
+    @Test
     public void unchangedKeepPreservesProfileIdentityAndDoesNotResealOrRewrite() throws Exception {
         SharedPreferences preferences = freshPreferences();
         JceCipher cipher = new JceCipher();
@@ -881,6 +938,8 @@ public class CaptionConnectionStoreTest {
         assertEquals(expected.wire.responseBytes, actual.wire.responseBytes);
         assertEquals(expected.wire.tokenField, actual.wire.tokenField);
         assertEquals(expected.wire.thinking, actual.wire.thinking);
+        assertEquals(expected.wire.service, actual.wire.service);
+        assertEquals(expected.wire.workspaceId, actual.wire.workspaceId);
         assertEquals(expected.batch.items, actual.batch.items);
         assertEquals(expected.batch.sourceCodePoints, actual.batch.sourceCodePoints);
         assertEquals(expected.batch.contextCodePoints, actual.batch.contextCodePoints);

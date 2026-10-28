@@ -152,6 +152,9 @@ final class CaptionBoundaryRefiner {
             text(hash, profile.wire.model);
             text(hash, profile.wire.thinking.name());
             text(hash, profile.wire.tokenField.name());
+            text(hash, profile.wire.service.name());
+            text(hash, profile.wire.workspaceId);
+            text(hash, CaptionModelPolicy.REVISION);
             text(hash, profile.sourceLanguage);
             text(hash, profile.wire.requestBytes + "/" + profile.wire.responseBytes + "/" + Math.min(512, profile.wire.maxOutputTokens));
             for (int group = first; group < end; group++) {

@@ -16,7 +16,12 @@ public final class CaptionConnection {
 
     /** Explicit initial budgets for the first native connection editor, not inferred provider capabilities. */
     public static CaptionConnection basic(String endpoint, String model, int outputTokens, ChatCompletionAdapter.Thinking thinking) {
+        return basic(endpoint, model, outputTokens, thinking, CaptionService.CUSTOM_CHAT, null);
+    }
+
+    public static CaptionConnection basic(String endpoint, String model, int outputTokens, ChatCompletionAdapter.Thinking thinking,
+                                          CaptionService service, String workspaceId) {
         return new CaptionConnection(new ChatCompletionAdapter.Config(endpoint, model, outputTokens, 262144, 262144,
-                ChatCompletionAdapter.TokenField.MAX_TOKENS, thinking), new TranslationBatch.Limits(12, 6000, 2000, 12000), 2);
+                ChatCompletionAdapter.TokenField.MAX_TOKENS, thinking, service, workspaceId), new TranslationBatch.Limits(12, 6000, 2000, 12000), 2);
     }
 }

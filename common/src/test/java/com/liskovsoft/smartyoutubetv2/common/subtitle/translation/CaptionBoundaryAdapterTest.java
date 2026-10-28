@@ -44,6 +44,27 @@ public class CaptionBoundaryAdapterTest {
     }
 
     @Test
+    public void nativeBoundaryEnvelopesUseTheSelectedProtocolWithoutChangingSourceAuthority() throws Exception {
+        SegmentationProposal proposal = proposal("red blue");
+        for (CaptionService service : new CaptionService[]{CaptionService.OPENAI_RESPONSES, CaptionService.CLAUDE, CaptionService.GEMINI}) {
+            ChatCompletionAdapter.Config wire = CaptionProviderProtocolTest.wire(service,
+                    service == CaptionService.GEMINI ? "gemini-2.5-flash" : service == CaptionService.CLAUDE ? "claude-sonnet-4-6" : "gpt-5.5",
+                    ChatCompletionAdapter.Thinking.AUTO_LOW);
+            JSONObject body = new JSONObject(new String(CaptionBoundaryAdapter.encode(proposal, wire, "en"), Charset.forName("UTF-8")));
+            assertFalse(body.has("temperature"));
+            if (service == CaptionService.OPENAI_RESPONSES) assertEquals(512, body.getInt("max_output_tokens"));
+            if (service == CaptionService.CLAUDE) assertEquals(512, body.getInt("max_tokens"));
+            if (service == CaptionService.GEMINI) assertEquals(512, body.getJSONObject("generationConfig").getInt("maxOutputTokens"));
+            CaptionBoundaryAdapter.Result result = CaptionBoundaryAdapter.decode(proposal, wire,
+                    CaptionProviderProtocolTest.reply(service, "{\"boundaries\":[\"p1\",\"p2\"]}"));
+            assertTrue(result.complete());
+            assertTrue(proposal.owns(result.decision));
+            assertEquals("red ", result.decision.units.get(0).originalText);
+            assertEquals("blue", result.decision.units.get(1).originalText);
+        }
+    }
+
+    @Test
     public void boundaryIdsCreateOwnedExactUnitsAndAnActualPlanButNeverModelWording() throws Exception {
         SegmentationProposal proposal = proposal("red blue");
         CaptionBoundaryAdapter.Result result = CaptionBoundaryAdapter.decode(proposal, WIRE, envelope("{\"boundaries\":[\"p1\",\"p2\"]}", "stop"));

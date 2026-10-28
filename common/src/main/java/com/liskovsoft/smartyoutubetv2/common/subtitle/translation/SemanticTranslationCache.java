@@ -99,6 +99,9 @@ final class SemanticTranslationCache {
         digest.number(profile.wire.responseBytes);
         digest.string(profile.wire.tokenField.name());
         digest.string(profile.wire.thinking.name());
+        digest.string(profile.wire.service.name());
+        digest.string(profile.wire.workspaceId);
+        digest.string(CaptionModelPolicy.REVISION);
         digest.number(profile.credentialRevision);
         digest.string(profile.sourceLanguage);
         digest.string(profile.targetLanguage);

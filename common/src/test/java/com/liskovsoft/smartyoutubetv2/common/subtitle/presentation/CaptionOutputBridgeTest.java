@@ -87,6 +87,30 @@ public class CaptionOutputBridgeTest {
     }
 
     @Test
+    public void nativeCueGapKeepsInflightPrefetchButNeverRendersTheLateResponse() throws Exception {
+        Harness h = new Harness("WEBVTT\n\n00:01.000 --> 00:03.000\nfirst\n\n" +
+                "00:04.000 --> 00:06.000\nsecond\n");
+        try {
+            assertEquals(2, h.observation.getSession().getSnapshot().groups.getGroups().size());
+            h.enable();
+            emitNative(h, Collections.singletonList(new Cue("first")));
+            h.beforeResponse.set(() -> {
+                h.positionMs = 3500;
+                emitNative(h, Collections.emptyList());
+                assertTrue(h.last.isEmpty());
+            });
+            h.worker.drain();
+            h.ui.pulse();
+            assertTrue("A late result must not revive captions during a native gap", h.last.isEmpty());
+            h.positionMs = 4000;
+            emitNative(h, Collections.singletonList(new Cue("second")));
+            assertTrue("The prefetched second cue must not need another request", h.worker.tasks.isEmpty());
+            assertEquals("second\n译:second", h.last.get(0).text.toString());
+            assertEquals(1, h.calls.get());
+        } finally { h.close(); }
+    }
+
+    @Test
     public void overlappingSettingsDoNotAssignTwoSourceGroupsToOneNativeRollupOrMultipleCues() throws Exception {
         for (boolean positioned : new boolean[]{false, true}) {
             String settings = positioned ? "align:start position:0%" : "align:start";

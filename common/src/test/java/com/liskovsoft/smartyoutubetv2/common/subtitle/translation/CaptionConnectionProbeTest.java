@@ -43,6 +43,32 @@ public class CaptionConnectionProbeTest {
         } finally { edit.discard(); store.close(); }
     }
 
+    @Test public void nativeProbePreservesTheModelAndLeavesRoomForItsMinimumThinkingBudget() throws Exception {
+        CaptionConnectionStore store = store();
+        JSONObject form = new JSONObject().put("version", 1).put("revision", "0").put("operation", "test")
+                .put("endpoint", CaptionService.GEMINI.defaultEndpoint).put("model", "gemini-2.5-pro").put("tokens", 1024)
+                .put("service", "GEMINI").put("workspace", JSONObject.NULL).put("thinking", "AUTO_LOW")
+                .put("keyEdit", "REPLACE").put("key", "synthetic-fixture-key");
+        CaptionConnectionEdit edit = CaptionConnectionEdit.parse(form.toString().getBytes(Charset.forName("UTF-8")), null);
+        try {
+            ChatTranslationClient client = new ChatTranslationClient(new OkHttpClient.Builder().addInterceptor(chain -> {
+                try {
+                    Buffer bytes = new Buffer(); chain.request().body().writeTo(bytes);
+                    JSONObject body = new JSONObject(bytes.readUtf8());
+                    JSONObject generation = body.getJSONObject("generationConfig");
+                    assertEquals(256, generation.getInt("maxOutputTokens"));
+                    assertEquals(128, generation.getJSONObject("thinkingConfig").getInt("thinkingBudget"));
+                    assertTrue(chain.request().url().encodedPath().endsWith("/gemini-2.5-pro:generateContent"));
+                    return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("fixture")
+                            .body(ResponseBody.create(MediaType.parse("application/json"), CaptionProviderProtocolTest.reply(CaptionService.GEMINI,
+                                    ChatCompletionAdapterTest.output("g0", "连接测试。")))).build();
+                } catch (Exception e) { throw new AssertionError(e); }
+            }).build());
+            assertEquals(ChatTranslationClient.Status.COMPLETE, CaptionConnectionProbe.create(edit, store.load(), "zh", client).execute().status);
+            assertFalse(store.load().hasKey);
+        } finally { edit.discard(); store.close(); }
+    }
+
     @Test public void discardBeforeExecutionPreventsAnyTransportCall() throws Exception {
         CaptionConnectionStore store = store();
         CaptionConnectionEdit edit = form("test", "0");

@@ -44,15 +44,7 @@ public final class CaptionBoundaryAdapter {
             }
             JSONObject input = new JSONObject().put("pieces", pieces);
             if (sourceLanguage != null) input.put("source_language", sourceLanguage);
-            JSONArray messages = new JSONArray()
-                    .put(new JSONObject().put("role", "system").put("content", SYSTEM))
-                    .put(new JSONObject().put("role", "user").put("content", input.toString()));
-            JSONObject body = new JSONObject().put("model", config.model).put("messages", messages).put("stream", false);
-            body.put(config.tokenField == ChatCompletionAdapter.TokenField.MAX_TOKENS ? "max_tokens" : "max_completion_tokens",
-                    Math.min(512, config.maxOutputTokens));
-            if (config.thinking == ChatCompletionAdapter.Thinking.DEEPSEEK_DISABLED) {
-                body.put("thinking", new JSONObject().put("type", "disabled"));
-            }
+            JSONObject body = CaptionProtocolAdapter.encode(config, SYSTEM, input.toString(), Math.min(512, config.maxOutputTokens));
             byte[] encoded = body.toString().getBytes(UTF8);
             if (encoded.length > config.requestBytes) throw TranslationBatch.invalid();
             return encoded;
@@ -69,24 +61,9 @@ public final class CaptionBoundaryAdapter {
             String json = UTF8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(response)).toString();
             JSONObject envelope = BoundedJson.object(json);
-            JSONArray choices = envelope.optJSONArray("choices");
-            if (choices == null || choices.length() != 1) return result(ChatCompletionAdapter.State.INVALID);
-            JSONObject choice = choices.optJSONObject(0);
-            JSONObject message = choice == null ? null : choice.optJSONObject("message");
-            if (message == null) return result(ChatCompletionAdapter.State.INVALID);
-            Object refusal = message.opt("refusal");
-            if (refusal != null && refusal != JSONObject.NULL && !"".equals(refusal)) return result(ChatCompletionAdapter.State.REFUSED);
-            String finish = BoundedJson.string(choice, "finish_reason");
-            if (!"stop".equals(finish)) {
-                return result("length".equals(finish) ? ChatCompletionAdapter.State.TRUNCATED :
-                        "content_filter".equals(finish) ? ChatCompletionAdapter.State.FILTERED :
-                        "tool_calls".equals(finish) || "function_call".equals(finish) || "aborted".equals(finish) ||
-                                "insufficient_system_resource".equals(finish) ? ChatCompletionAdapter.State.FAILED : ChatCompletionAdapter.State.UNKNOWN);
-            }
-            if (message.has("tool_calls") && !message.isNull("tool_calls") ||
-                    message.has("function_call") && !message.isNull("function_call")) return result(ChatCompletionAdapter.State.FAILED);
-            String content = BoundedJson.string(message, "content");
-            if (content == null) return result(ChatCompletionAdapter.State.INVALID);
+            CaptionProtocolAdapter.Text reply = CaptionProtocolAdapter.decode(config, envelope);
+            if (reply.state != ChatCompletionAdapter.State.COMPLETE) return result(reply.state);
+            String content = reply.content;
             JSONObject output = BoundedJson.object(content);
             JSONArray ends = output.optJSONArray("boundaries");
             List<SegmentationProposal.Piece> pieces = proposal.getPieces();

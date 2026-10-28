@@ -55,6 +55,27 @@ public class ChatTranslationClientTest {
     }
 
     @Test
+    public void recoverySharesOneOverallDeadlineAndKeepsCompletedItemsWhenItExpires() {
+        for (long elapsedMs : new long[]{44000, 45000}) {
+            long[] now = {0};
+            int[] calls = {0};
+            ChatTranslationClient client = new ChatTranslationClient(new OkHttpClient.Builder().addInterceptor(chain -> {
+                int call = calls[0]++;
+                assertEquals(TimeUnit.MILLISECONDS.toNanos(call == 0 ? 45000 : 1000), chain.call().timeout().timeoutNanos());
+                now[0] = TimeUnit.MILLISECONDS.toNanos(elapsedMs);
+                try {
+                    return response(chain.request(), 200, envelope("stop", output(call == 0 ? "g0" : "g1", "译文"), null));
+                } catch (Exception e) { throw new AssertionError(e); }
+            }).build(), () -> now[0]);
+            ChatTranslationClient.Result result = client.newJob(batch("first", "second"), config(), () -> "synthetic", 2).execute();
+            assertEquals(elapsedMs == 45000 ? 1 : 2, calls[0]);
+            assertEquals(elapsedMs == 45000 ? ChatTranslationClient.Status.NETWORK_ERROR : ChatTranslationClient.Status.COMPLETE, result.status);
+            assertEquals("译文", result.translations.get("g0"));
+            assertEquals(elapsedMs == 45000 ? 1 : 2, result.translations.size());
+        }
+    }
+
+    @Test
     public void truncatedBatchSplitsWithinHardCallBudgetAndNeverAcceptsTruncatedPrefix() throws Exception {
         int[] calls = {0};
         ChatTranslationClient client = client(chain -> {

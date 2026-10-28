@@ -583,7 +583,8 @@ public final class TranslationCoordinator {
     private void finish(Ticket ticket, ChatTranslationClient.Result result) {
         synchronized (this) {
             // Quota feedback survives an obsolete content/window ticket, never its translations.
-            if (!mClosed && result != null && result.batch == ticket.batch && result.httpCode == 429) {
+            if (!mClosed && result != null && result.batch == ticket.batch &&
+                    (result.httpCode == 429 || result.httpCode == 503 && result.retryAfterMs != null)) {
                 long delay = result.retryAfterMs == null ? mLimits.retryDelayMs : Math.max(mLimits.retryDelayMs, result.retryAfterMs);
                 mRateLimitedUntilMs = Math.max(mRateLimitedUntilMs, add(now(), delay));
             }

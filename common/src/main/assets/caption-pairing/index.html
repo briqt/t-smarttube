@@ -19,10 +19,26 @@
   <form id="connection-form" method="post" action="/api/save" autocomplete="off">
     <fieldset id="connection-fields" disabled>
       <legend data-i18n="connection">Connection</legend>
-      <label for="endpoint" data-i18n="endpoint">Complete API endpoint</label>
-      <input id="endpoint" type="url" inputmode="url" maxlength="4096" placeholder="https://…/chat/completions" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+      <label for="service" data-i18n="service">Platform / API protocol</label>
+      <select id="service">
+        <option value="CUSTOM_CHAT" data-i18n="serviceCustom">Custom Chat Completions</option>
+        <option value="OPENAI_CHAT" data-i18n="serviceOpenaiChat">OpenAI · Chat Completions</option>
+        <option value="OPENAI_RESPONSES" data-i18n="serviceOpenaiResponses">OpenAI · Responses</option>
+        <option value="DEEPSEEK" data-i18n="serviceDeepseek">DeepSeek · Chat Completions</option>
+        <option value="CLAUDE" data-i18n="serviceClaude">Claude · Messages</option>
+        <option value="GEMINI" data-i18n="serviceGemini">Gemini · native API</option>
+      </select>
+      <p class="hint" data-i18n="serviceHint">Changing platform resets thinking to automatic low. It fills only a blank or previous default endpoint and never chooses or replaces a model ID.</p>
+      <label for="endpoint" data-i18n="endpoint">HTTPS API endpoint</label>
+      <input id="endpoint" type="url" inputmode="url" maxlength="4096" placeholder="https://…" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+      <p id="gemini-endpoint-hint" class="hint" hidden data-i18n="geminiEndpoint">Gemini accepts a models base URL or a full /models/MODEL:generateContent URL matching the model ID below.</p>
       <label for="model" data-i18n="model">Model ID</label>
       <input id="model" type="text" maxlength="256" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+      <div id="workspace-wrap" hidden>
+        <label for="workspace" data-i18n="workspace">Claude workspace ID (optional)</label>
+        <input id="workspace" type="text" maxlength="128" pattern="[A-Za-z0-9_\-]{1,128}" autocapitalize="none" autocorrect="off" spellcheck="false" disabled>
+        <p class="hint" data-i18n="workspaceHint">Claude only: letters, digits, _ or -. Leave blank to omit the workspace header.</p>
+      </div>
       <p id="key-state" class="key-state"></p>
       <fieldset class="key-options">
         <legend data-i18n="key">Key</legend>
@@ -35,13 +51,15 @@
         <input id="replacement" type="password" maxlength="8192" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
         <p class="hint" data-i18n="keyHint">The TV never returns your saved Key to this page.</p>
       </div>
-      <p id="endpoint-warning" class="hint warning" hidden data-i18n="endpointChanged">Changing the endpoint requires a new Key or explicitly removing the old one.</p>
+      <p id="endpoint-warning" class="hint warning" hidden data-i18n="endpointChanged">Changing the endpoint, platform or workspace requires a new Key or explicitly removing the old one.</p>
+      <label for="thinking" data-i18n="thinking">Thinking request policy</label>
+      <select id="thinking"><option value="AUTO_LOW" data-i18n="thinkingAuto">Automatic: off or lowest supported</option><option value="OMIT" data-i18n="thinkingDefault">Provider default (no extra parameter)</option><option id="thinking-deepseek" value="DEEPSEEK_DISABLED" data-i18n="thinkingDisabled">Manual DeepSeek disabled (compatible models only)</option></select>
+      <p id="thinking-policy" class="hint" role="status" aria-live="polite"></p>
+      <p class="hint" data-i18n="thinkingNotice">Request parameters do not prove zero reasoning or cost. Automatic mode uses known model rules; unknown models keep provider defaults. Manual DeepSeek disabled is available only for Custom Chat and DeepSeek.</p>
       <details>
         <summary data-i18n="advanced">Output and model parameters</summary>
         <label for="tokens" data-i18n="tokens">Maximum output tokens</label>
         <input id="tokens" type="number" inputmode="numeric" min="1" max="1048576" step="1" value="1024" required>
-        <label for="thinking" data-i18n="thinking">Thinking parameter</label>
-        <select id="thinking"><option value="OMIT" data-i18n="thinkingDefault">Do not add a parameter</option><option value="DEEPSEEK_DISABLED" data-i18n="thinkingDisabled">DeepSeek: send disabled</option></select>
         <p class="hint" data-i18n="modelHint">Limits and parameters must match your model. Saving alone does not verify model access.</p>
       </details>
       <div class="actions"><button id="test" type="button" class="secondary" data-i18n="test">Test connection</button><button id="save" type="submit" data-i18n="save">Save on TV</button></div>
