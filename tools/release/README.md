@@ -9,8 +9,10 @@ The application enhancement has one source of truth. Each channel is built from
 its upstream release commit plus the same enhancement delta; building two flavors
 of the latest development checkout is not a substitute for this.
 
-These tools use Python 3.9+ standard-library modules, Git, the GitHub CLI, JDK 17,
-and the Android SDK. They do not generate a release key or enable remote releases.
+These tools use Python 3.9+ standard-library modules, Node.js 20+, Git, the GitHub
+CLI, JDK 17, and the Android SDK. The pairing-page regression fixtures execute the
+production JavaScript with Node's built-in VM; they need no npm packages, browser,
+network, or credentials. These tools do not generate a release key or enable remote releases.
 
 ## Source selection
 

@@ -56,6 +56,8 @@
     expired: ['Pairing has ended or is no longer current. Reopen it on your TV and scan the new QR code.', '配对已结束或已失效。请在电视重新打开，并扫描新的二维码。'],
     unknown: ['No save confirmation was received. This does not mean nothing was saved. Check the TV before reopening pairing.', '未收到保存确认，这不代表没有保存。请先查看电视状态，再重新配对。'],
     unreachable: ['Cannot reach the TV. Check the same home network and reopen pairing if it expired.', '无法连接电视。请确认在同一家庭网络；如已过期，请在电视重新配对。'],
+    readFailed: ['Connected to the TV, but its settings could not be read. Reopen pairing on the TV and try again.', '已连接到电视，但读取配置失败。请在电视上重新打开配对后重试。'],
+    invalidResponse: ['The TV responded with invalid settings data. Reopen pairing on the TV and try again.', '已收到电视响应，但配置数据无效。请在电视上重新打开配对后重试。'],
     badInput: ['Check the platform, HTTPS endpoint, model, token limit and optional Claude workspace. Key is not trimmed and cannot contain spaces or line breaks.', '请检查平台、HTTPS 地址、模型、token 上限和可选 Claude workspace。Key 不会自动裁剪，不能包含空格或换行。'],
     busy: ['A request is still being handled. Do not submit it repeatedly; check the TV or reopen pairing.', '一个请求仍在处理中。请勿反复提交；先查看电视状态或重新配对。'],
     ended: ['Pairing ended. Use the TV menu to start a new session.', '配对已结束，需要时可从电视菜单重新开启。'],
@@ -241,7 +243,11 @@
   window.addEventListener('pagehide', function () { finish('expired'); });
   if (!/^[0-9a-f]{64}$/.test(token)) { finish('noToken', 'error'); return; }
   request('/api/state', {}, function (code, body) {
-    if (code >= 200 && code < 300 && applyState(body)) status(body.valid ? 'ready' : 'invalidState', body.valid ? '' : 'error');
-    else finish(code === 403 || code === 410 ? 'expired' : 'unreachable', 'error');
+    if (code >= 200 && code < 300) {
+      if (!applyState(body)) { finish('invalidResponse', 'error'); return; }
+      status(body.valid ? 'ready' : 'invalidState', body.valid ? '' : 'error');
+      return;
+    }
+    finish(code === 403 || code === 410 ? 'expired' : code ? 'readFailed' : 'unreachable', 'error');
   });
 }());
