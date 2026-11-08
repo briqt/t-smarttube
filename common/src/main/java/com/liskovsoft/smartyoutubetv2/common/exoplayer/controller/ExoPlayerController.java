@@ -11,7 +11,6 @@ import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.source.MediaSource;
-import com.google.android.exoplayer2.text.SubtitleDecoderFactory;
 import com.google.android.exoplayer2.source.MergingMediaSource;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
@@ -35,10 +34,11 @@ import com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.track.VideoTrack
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.ExoUtils;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerTweaksData;
-import com.liskovsoft.smartyoutubetv2.common.subtitle.observation.CaptionObservation;
-import com.liskovsoft.smartyoutubetv2.common.exoplayer.other.SubtitleManager;
-import com.liskovsoft.smartyoutubetv2.common.subtitle.presentation.CaptionOutputBridge;
+import com.google.android.exoplayer2.text.SubtitleDecoderFactory;
 import com.google.android.exoplayer2.ui.SubtitleView;
+import com.liskovsoft.smartyoutubetv2.common.exoplayer.other.SubtitleManager;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.observation.CaptionObservation;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.presentation.CaptionOutputBridge;
 
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
@@ -59,32 +59,6 @@ public class ExoPlayerController implements Player.EventListener {
     private VolumeBooster mVolumeBooster;
     private boolean mIsEnded;
     private Runnable mOnVideoLoaded;
-    private CaptionObservation mCaptionObservation;
-    private SubtitleManager mCaptionSubtitleManager;
-
-    public SubtitleDecoderFactory createSubtitleDecoderFactory() {
-        if (mCaptionObservation != null) mCaptionObservation.close();
-        mCaptionObservation = CaptionObservation.create(mContext);
-        mMediaSourceFactory.setCaptionObservation(mCaptionObservation);
-        return mCaptionObservation == null ? SubtitleDecoderFactory.DEFAULT : mCaptionObservation;
-    }
-
-    public SubtitleManager createSubtitleManager(SubtitleView view) {
-        if (mCaptionSubtitleManager != null) mCaptionSubtitleManager.release();
-        mCaptionSubtitleManager = new SubtitleManager(view);
-        mCaptionSubtitleManager.attachCaptionBridge(mCaptionObservation, this::getPositionMs);
-        return mCaptionSubtitleManager;
-    }
-
-    public CaptionOutputBridge getCaptionOutputBridge() {
-        return mCaptionSubtitleManager == null ? null : mCaptionSubtitleManager.getCaptionBridge();
-    }
-
-    private void clearCaptionSource() {
-        CaptionOutputBridge bridge = getCaptionOutputBridge();
-        if (bridge != null) bridge.resetSource();
-        if (mCaptionObservation != null) mCaptionObservation.clearSource();
-    }
 
     public ExoPlayerController(Context context, PlayerEventListener eventListener) {
         PlayerTweaksData playerTweaksData = PlayerTweaksData.instance(context);
@@ -111,50 +85,42 @@ public class ExoPlayerController implements Player.EventListener {
     }
 
     public void openSabr(MediaItemFormatInfo formatInfo) {
-        clearCaptionSource();
         MediaSource mediaSource = mMediaSourceFactory.fromSabrFormatInfo(formatInfo);
         openMediaSource(mediaSource);
     }
 
     public void openDash(MediaItemFormatInfo formatInfo) {
-        clearCaptionSource();
         MediaSource mediaSource = mMediaSourceFactory.fromDashFormatInfo(formatInfo);
         openMediaSource(mediaSource);
     }
 
     public void openDash(InputStream dashManifest) {
-        clearCaptionSource();
         MediaSource mediaSource = mMediaSourceFactory.fromDashManifest(dashManifest);
         openMediaSource(mediaSource);
     }
 
     public void openDashUrl(String dashManifestUrl) {
-        clearCaptionSource();
         MediaSource mediaSource = mMediaSourceFactory.fromDashManifestUrl(dashManifestUrl);
         openMediaSource(mediaSource);
     }
 
     public void openHlsUrl(String hlsPlaylistUrl) {
-        clearCaptionSource();
         MediaSource mediaSource = mMediaSourceFactory.fromHlsPlaylist(hlsPlaylistUrl);
         openMediaSource(mediaSource);
     }
 
     public void openUrlList(List<String> urlList) {
-        clearCaptionSource();
         MediaSource mediaSource = mMediaSourceFactory.fromUrlList(urlList);
         openMediaSource(mediaSource);
     }
 
     public void openMerged(MediaItemFormatInfo formatInfo, String hlsPlaylistUrl) {
-        clearCaptionSource();
         MediaSource dashMediaSource = mMediaSourceFactory.fromDashFormatInfo(formatInfo);
         MediaSource hlsMediaSource = mMediaSourceFactory.fromHlsPlaylist(hlsPlaylistUrl);
         openMediaSource(new MergingMediaSource(dashMediaSource, hlsMediaSource));
     }
 
     public void openMerged(InputStream dashManifest, String hlsPlaylistUrl) {
-        clearCaptionSource();
         MediaSource dashMediaSource = mMediaSourceFactory.fromDashManifest(dashManifest);
         MediaSource hlsMediaSource = mMediaSourceFactory.fromHlsPlaylist(hlsPlaylistUrl);
         openMediaSource(new MergingMediaSource(dashMediaSource, hlsMediaSource));
@@ -186,8 +152,6 @@ public class ExoPlayerController implements Player.EventListener {
     public void setPositionMs(long positionMs) {
         // Url list videos at load stage has undefined (-1) length. So, we need to remove length check.
         if (mPlayer != null && positionMs >= 0 && positionMs <= getDurationMs()) {
-            CaptionOutputBridge bridge = getCaptionOutputBridge();
-            if (bridge != null) bridge.seek();
             mPlayer.seekTo(positionMs);
         }
     }
@@ -235,6 +199,33 @@ public class ExoPlayerController implements Player.EventListener {
         return mPlayer.getPlaybackState() != Player.STATE_IDLE;
     }
     
+    private CaptionObservation mCaptionObservation;
+    private SubtitleManager mCaptionSubtitleManager;
+
+    public SubtitleDecoderFactory createSubtitleDecoderFactory() {
+        if (mCaptionObservation != null) mCaptionObservation.close();
+        mCaptionObservation = CaptionObservation.create(mContext);
+        mMediaSourceFactory.setCaptionObservation(mCaptionObservation, this::clearCaptionSource);
+        return mCaptionObservation == null ? SubtitleDecoderFactory.DEFAULT : mCaptionObservation;
+    }
+
+    public SubtitleManager createSubtitleManager(SubtitleView view) {
+        if (mCaptionSubtitleManager != null) mCaptionSubtitleManager.release();
+        mCaptionSubtitleManager = new SubtitleManager(view);
+        mCaptionSubtitleManager.attachCaptionBridge(mCaptionObservation, mPlayer, this::getPositionMs);
+        return mCaptionSubtitleManager;
+    }
+
+    public CaptionOutputBridge getCaptionOutputBridge() {
+        return mCaptionSubtitleManager == null ? null : mCaptionSubtitleManager.getCaptionBridge();
+    }
+
+    private void clearCaptionSource() {
+        CaptionOutputBridge bridge = getCaptionOutputBridge();
+        if (bridge != null) bridge.resetSource();
+        if (mCaptionObservation != null) mCaptionObservation.clearSource();
+    }
+
     public void release() {
         if (mCaptionSubtitleManager != null) mCaptionSubtitleManager.release();
         mCaptionSubtitleManager = null;
@@ -252,6 +243,7 @@ public class ExoPlayerController implements Player.EventListener {
     public void setPlayer(SimpleExoPlayer player) {
         mPlayer = player;
         player.addListener(this);
+        if (mCaptionSubtitleManager != null) mCaptionSubtitleManager.setCaptionPlayer(player);
     }
 
     //@Override
@@ -429,8 +421,6 @@ public class ExoPlayerController implements Player.EventListener {
 
     @Override
     public void onSeekProcessed() {
-        CaptionOutputBridge bridge = getCaptionOutputBridge();
-        if (bridge != null) bridge.seekProcessed();
         mEventListener.onSeekEnd();
     }
 
@@ -492,6 +482,7 @@ public class ExoPlayerController implements Player.EventListener {
      * Without this also you'll have problems with track quality switching(??).
      */
     public void resetPlayerState() {
+        mMediaSourceFactory.onMediaSourcePrepared();
         if (containsMedia()) {
             mPlayer.stop(true);
         }

@@ -265,8 +265,8 @@ public final class CaptionPairingDialog implements Closeable {
         content.setPadding(padding, padding, padding, padding);
         TextView notice = new TextView(mContext); notice.setText(R.string.caption_pairing_notice); content.addView(notice);
         mStatus = new TextView(mContext); mStatus.setText(R.string.caption_ai_loading); content.addView(mStatus);
-        mAddresses = new Spinner(mContext); content.addView(mAddresses);
-        mCode = new ImageView(mContext); mCode.setAdjustViewBounds(true);
+        mAddresses = new Spinner(mContext); mAddresses.setVisibility(android.view.View.GONE); content.addView(mAddresses);
+        mCode = new ImageView(mContext); mCode.setAdjustViewBounds(true); mCode.setVisibility(android.view.View.GONE);
         mCode.setContentDescription(mContext.getString(R.string.caption_pairing_code));
         content.addView(mCode, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 (int) (240 * mContext.getResources().getDisplayMetrics().density)));
@@ -288,13 +288,17 @@ public final class CaptionPairingDialog implements Closeable {
                 if (!mSession.current()) return;
                 if (found.isEmpty()) { mStatus.setText(R.string.caption_pairing_no_network); return; }
                 mAddresses.setAdapter(new ArrayAdapter<>(mContext, android.R.layout.simple_spinner_dropdown_item, found));
+                if (found.size() == 1) {
+                    bind(found.get(0));
+                    return;
+                }
+                mAddresses.setVisibility(android.view.View.VISIBLE);
                 mStatus.setText(R.string.caption_pairing_choose_network);
                 mDialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                 mDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
                     if (!mSession.current()) return;
                     bind(found.get(mAddresses.getSelectedItemPosition()));
                 });
-                if (found.size() == 1) bind(found.get(0));
             });
         });
     }
@@ -318,7 +322,7 @@ public final class CaptionPairingDialog implements Closeable {
                 Bitmap ready = bitmap;
                 mUi.post(() -> {
                     if (!mSession.current()) { ready.recycle(); return; }
-                    mBitmap = ready; mCode.setImageBitmap(ready);
+                    mBitmap = ready; mCode.setImageBitmap(ready); mCode.setVisibility(android.view.View.VISIBLE);
                 });
             } catch (IOException | WriterException | RuntimeException unavailable) {
                 if (bitmap != null) bitmap.recycle();

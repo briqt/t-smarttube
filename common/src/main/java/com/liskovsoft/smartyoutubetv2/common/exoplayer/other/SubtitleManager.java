@@ -11,6 +11,7 @@ import android.view.accessibility.CaptioningManager.CaptionStyle;
 
 import androidx.annotation.RequiresApi;
 import androidx.core.content.ContextCompat;
+import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.text.CaptionStyleCompat;
 import com.google.android.exoplayer2.text.Cue;
 import com.google.android.exoplayer2.text.TextOutput;
@@ -35,6 +36,22 @@ public class SubtitleManager implements TextOutput, OnDataChange {
     private final PlayerData mPlayerData;
     private CharSequence subsBuffer;
     private CaptionOutputBridge mCaptionBridge;
+    private Player mCaptionPlayer;
+    private final Player.EventListener mCaptionPlayerListener = new Player.EventListener() {
+        @Override
+        public void onPositionDiscontinuity(int reason) {
+            if (reason == Player.DISCONTINUITY_REASON_SEEK && mCaptionBridge != null) {
+                mCaptionBridge.seek();
+            }
+        }
+
+        @Override
+        public void onSeekProcessed() {
+            if (mCaptionBridge != null) {
+                mCaptionBridge.seekProcessed();
+            }
+        }
+    };
     private boolean mReleased;
 
     public static class SubtitleStyle {
@@ -69,17 +86,40 @@ public class SubtitleManager implements TextOutput, OnDataChange {
     }
 
     public void attachCaptionBridge(CaptionObservation observation, CaptionOutputBridge.Position position) {
+        attachCaptionBridge(observation, null, position);
+    }
+
+    public void attachCaptionBridge(CaptionObservation observation, Player player, CaptionOutputBridge.Position position) {
         if (mReleased) return;
+        detachCaptionPlayer();
         if (mCaptionBridge != null) mCaptionBridge.close();
         mCaptionBridge = observation == null ? null : CaptionOutputBridge.create(observation, mSubtitleView::setCues, position);
+        setCaptionPlayer(player);
+    }
+
+    public void setCaptionPlayer(Player player) {
+        if (mReleased) return;
+        detachCaptionPlayer();
+        if (mCaptionBridge != null && player != null) {
+            mCaptionPlayer = player;
+            mCaptionPlayer.addListener(mCaptionPlayerListener);
+        }
     }
 
     public CaptionOutputBridge getCaptionBridge() { return mCaptionBridge; }
 
     public void release() {
         mReleased = true;
+        detachCaptionPlayer();
         if (mCaptionBridge != null) mCaptionBridge.close();
         mCaptionBridge = null;
+    }
+
+    private void detachCaptionPlayer() {
+        if (mCaptionPlayer != null) {
+            mCaptionPlayer.removeListener(mCaptionPlayerListener);
+            mCaptionPlayer = null;
+        }
     }
 
     @Override

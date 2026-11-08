@@ -136,7 +136,7 @@
     return true;
   }
   function edited() { if (!busy && !ended && state) { loadedPolicy = null; status('changed'); update(); } }
-  function applyState(next) {
+  function validState(next) {
     if (!next || next.version !== 1 || typeof next.revision !== 'string' || !/^(0|[1-9][0-9]{0,18})$/.test(next.revision) ||
         typeof next.valid !== 'boolean' || ['NONE', 'PERSISTENT', 'MEMORY_ONLY'].indexOf(next.keyState) < 0) return false;
     var connection = next.connection;
@@ -148,6 +148,12 @@
         (connection.workspace != null && (service !== 'CLAUDE' || typeof connection.workspace !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(connection.workspace)) ||
         connection.thinking === 'DEEPSEEK_DISABLED' && service !== 'CUSTOM_CHAT' && service !== 'DEEPSEEK' ||
         connection.thinkingPolicy !== undefined && Object.keys(policies).indexOf(connection.thinkingPolicy) < 0)) return false;
+    return true;
+  }
+  function applyState(next) {
+    if (!validState(next)) return false;
+    var connection = next.connection;
+    var service = connection && connection.service !== undefined ? connection.service : 'CUSTOM_CHAT';
     state = next;
     selectedService = service;
     loadedPolicy = connection && policies[connection.thinkingPolicy] || null;
@@ -170,6 +176,23 @@
       endpoint: byId('endpoint').value.trim(), model: byId('model').value.trim(), tokens: Number(byId('tokens').value),
       thinking: byId('thinking').value, keyEdit: mode(), key: mode() === 'REPLACE' ? byId('replacement').value : null};
   }
+  function handleFailure(operation, code, body) {
+    if (code === 403 || code === 410) { finish('expired', 'error'); return; }
+    if (!code || body && body.error === 'result_unknown') {
+      if (operation !== 'test') { finish('unknown', 'error'); return; }
+      status('testFailed', 'error'); update(); return;
+    }
+    if (body && body.state) {
+      if (!validState(body.state)) { finish('unknown', 'error'); return; }
+      // A rejected draft or failed write can include the unchanged snapshot. Keep the draft for retry.
+      if (body.partial || body.code === 'REVISION_CONFLICT' || body.state.revision !== state.revision) {
+        applyState(body.state);
+        status(body.partial ? 'partial' : 'conflict', 'error'); update(); return;
+      }
+    }
+    status(code === 400 || code === 415 || code === 413 ? 'badInput' : code === 409 || code === 429 ? 'busy' : operation === 'test' ? 'testFailed' : 'writeFailed', 'error');
+    update();
+  }
   function submit(operation) {
     var formElement = byId('connection-form');
     if (busy || ended || !state) return;
@@ -188,17 +211,7 @@
           finish(state.keyState === 'MEMORY_ONLY' ? 'savedMemory' : state.keyState === 'NONE' ? 'savedMissing' : 'saved', 'success'); return;
         }
       }
-      if (code === 403 || code === 410) { finish('expired', 'error'); return; }
-      if (body && body.state) {
-        if (!applyState(body.state)) { finish('unknown', 'error'); return; }
-        status(body.partial ? 'partial' : 'conflict', 'error'); update(); return;
-      }
-      if (!code || body && body.error === 'result_unknown') {
-        if (operation === 'save') { finish('unknown', 'error'); return; }
-        status('testFailed', 'error'); update(); return;
-      }
-      status(code === 400 || code === 415 || code === 413 ? 'badInput' : code === 409 || code === 429 ? 'busy' : operation === 'test' ? 'testFailed' : 'writeFailed', 'error');
-      update();
+      handleFailure(operation, code, body);
     });
   }
   byId('connection-form').onsubmit = function (event) { event.preventDefault(); submit('save'); };
@@ -227,10 +240,7 @@
             body.state.connection !== null || !applyState(body.state)) { finish('unknown', 'error'); return; }
         finish('cleared', 'success'); return;
       }
-      if (code === 403 || code === 410) { finish('expired', 'error'); return; }
-      if (!code || body && body.error === 'result_unknown') { finish('unknown', 'error'); return; }
-      if (body && body.state) applyState(body.state);
-      status('writeFailed', 'error'); update();
+      handleFailure('clear', code, body);
     });
   };
   byId('cancel').onclick = function () {

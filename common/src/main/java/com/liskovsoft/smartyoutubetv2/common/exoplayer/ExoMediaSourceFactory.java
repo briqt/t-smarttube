@@ -74,36 +74,65 @@ public class ExoMediaSourceFactory {
     private DataSource.Factory mMediaDataSourceFactory;
     private DataSource.Factory mSabrMediaDataSourceFactory;
     private CaptionObservation mCaptionObservation;
+    private Runnable mCaptionSourceReset;
+    private boolean mCaptionDashSourcePending;
 
     public ExoMediaSourceFactory(Context context) {
         mContext = context;
     }
 
     public void setCaptionObservation(CaptionObservation observation) {
+        setCaptionObservation(observation, null);
+    }
+
+    public void setCaptionObservation(CaptionObservation observation, Runnable onSourceReset) {
         mCaptionObservation = observation;
+        mCaptionSourceReset = onSourceReset;
+        mCaptionDashSourcePending = false;
+    }
+
+    public void onMediaSourcePrepared() {
+        mCaptionDashSourcePending = false;
+    }
+
+    private void resetCaptionSource() {
+        mCaptionDashSourcePending = false;
+        if (mCaptionSourceReset != null) mCaptionSourceReset.run();
+        else if (mCaptionObservation != null) mCaptionObservation.clearSource();
     }
 
     public MediaSource fromSabrFormatInfo(MediaItemFormatInfo formatInfo) {
+        resetCaptionSource();
         return buildSabrMediaSource(formatInfo);
     }
 
     public MediaSource fromDashFormatInfo(MediaItemFormatInfo formatInfo) {
-        return buildDashMediaSource(formatInfo);
+        resetCaptionSource();
+        MediaSource mediaSource = buildDashMediaSource(formatInfo);
+        mCaptionDashSourcePending = true;
+        return mediaSource;
     }
 
     public MediaSource fromDashManifest(InputStream dashManifest) {
-        return buildMPDMediaSource(DASH_MANIFEST_URI, dashManifest);
+        resetCaptionSource();
+        MediaSource mediaSource = buildMPDMediaSource(DASH_MANIFEST_URI, dashManifest);
+        mCaptionDashSourcePending = true;
+        return mediaSource;
     }
 
     public MediaSource fromDashManifestUrl(String dashManifestUrl) {
+        resetCaptionSource();
         return buildMediaSource(Uri.parse(dashManifestUrl), DASH_MANIFEST_EXTENSION);
     }
 
     public MediaSource fromHlsPlaylist(String hlsPlaylist) {
+        if (!mCaptionDashSourcePending) resetCaptionSource();
+        mCaptionDashSourcePending = false;
         return buildMediaSource(Uri.parse(hlsPlaylist), HLS_PLAYLIST_EXTENSION);
     }
 
     public MediaSource fromUrlList(List<String> urlList) {
+        resetCaptionSource();
         MediaSource[] mediaSources = new MediaSource[urlList.size()];
 
         for (int i = 0; i < urlList.size(); i++) {
@@ -374,6 +403,7 @@ public class ExoMediaSourceFactory {
     }
 
     public void release() {
+        mCaptionDashSourcePending = false;
         mMediaDataSourceFactory = null;
         mSabrMediaDataSourceFactory = null;
     }
