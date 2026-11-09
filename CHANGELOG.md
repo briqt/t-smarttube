@@ -3,6 +3,16 @@
 This log covers the enhancement fork. Upstream release history remains available
 in [SmartTube releases](https://github.com/yuliskov/SmartTube/releases).
 
+## Enhancement revision 4
+
+- Remove LAN phone-pairing server, QR code dialog, web assets, and ZXing dependency to keep configuration purely native and lightweight.
+- Raise the default maximum output token limit for new connections from 1024 to 8192.
+- Simplify subtitle settings and model connection dialog labels, hints, and status copy.
+
+## Enhancement revision 3
+
+- Decouple subtitle source reset and seek lifecycle hooks from high-churn `ExoPlayerController` methods into `ExoMediaSourceFactory` and `SubtitleManager` (`Player.EventListener`) for clean upstream `32.71` integration.
+
 ## Enhancement revision 1
 
 - Keep valid in-flight translation and prefetch through ordinary native-caption gaps without reviving cleared captions.

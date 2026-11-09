@@ -144,8 +144,6 @@ class NativeAbiTest(unittest.TestCase):
             with zipfile.ZipFile(apk, "w") as archive:
                 archive.writestr("lib/arm64-v8a/libfixture.so", header)
                 archive.writestr("assets/padding", b"x" * 1000001)
-                for name in ("index.html", "pair.js", "pair.css"):
-                    archive.writestr("assets/caption-pairing/" + name, "fixture")
             with patch.object(integration, "run", side_effect=fake_aapt):
                 return artifacts.inspect_apk(plan, apk, "arm64-v8a", tools=Path("/fixture-tools"))
 

@@ -124,40 +124,6 @@ public class CaptionSettingsControllerTest {
             assertFalse((Boolean) ReflectionHelpers.callInstanceMethod(h, "globalMenuCurrent", ReflectionHelpers.ClassParameter.from(Object.class, next)));
         } finally { h.onFinish(); }
     }
-    @Test public void sourceChangeDoesNotClosePairingButEngineViewAndFinishDoWithoutOpeningSockets() throws Exception {
-        Harness h = new Harness();
-        try {
-            CaptionPairingDialog first = unshownPairing(h.context);
-            ReflectionHelpers.setField(h, "mPairing", first);
-            CaptionPairingDialog.Session session = ReflectionHelpers.getField(first, "mSession");
-            h.onNewVideo(video("synthetic-b"));
-            assertTrue(session.current());
-            h.onEngineReleased();
-            assertFalse(session.current());
-            CaptionPairingDialog second = unshownPairing(h.context);
-            ReflectionHelpers.setField(h, "mPairing", second);
-            session = ReflectionHelpers.getField(second, "mSession");
-            h.onViewDestroyed(); assertFalse(session.current());
-            CaptionPairingDialog third = unshownPairing(h.context);
-            ReflectionHelpers.setField(h, "mPairing", third);
-            session = ReflectionHelpers.getField(third, "mSession");
-            h.onFinish(); assertFalse(session.current());
-        } finally { h.onFinish(); }
-    }
-    private static CaptionPairingDialog unshownPairing(Context context) throws Exception {
-        Constructor<CaptionPairingDialog> constructor = CaptionPairingDialog.class.getDeclaredConstructor(
-                Context.class, CaptionPairingDialog.Active.class, CaptionPairingDialog.Host.class);
-        constructor.setAccessible(true);
-        return constructor.newInstance(context, (CaptionPairingDialog.Active) () -> true, new CaptionPairingDialog.Host() {
-            @Override public void read(CaptionPairingDialog.Read completion) { fail("Unshown windows do not read"); }
-            @Override public void save(com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionConnectionEdit edit,
-                    CaptionPairingDialog.Session session, CaptionPairingDialog.Saved completion) { fail("Unshown windows do not save"); }
-            @Override public com.liskovsoft.smartyoutubetv2.common.subtitle.translation.ChatTranslationClient.Job probe(
-                    com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionConnectionEdit edit, CaptionConnectionStore.Snapshot snapshot) {
-                throw new AssertionError("Unshown windows do not probe");
-            }
-        });
-    }
     @Test public void engineOrViewRecreationCannotReviveOldDialogActionsForTheSameVideo() throws Exception {
         Harness h = new Harness();
         h.onNewVideo(video("synthetic-a"));

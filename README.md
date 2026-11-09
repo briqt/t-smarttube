@@ -9,23 +9,19 @@ the upstream download links in the preserved documentation below install the ori
 
 - Enable AI subtitles for a channel from the existing player subtitle menu.
 - Configure the global target language, original/translation order, or translation-only display in **AI subtitle details**.
-- Configure a chat-completions-compatible endpoint, model and API key through the native connection editor or a temporary local-network pairing page. QR codes are generated locally.
+- Configure a model provider, endpoint, model ID and API key through the native connection editor.
 - Existing subtitle selection, NONE, styling, size and position controls remain available. Turning AI off restores the native subtitle path.
 - Translation uses available text captions; it does not upload audio or create captions for videos without them. Unsupported or incomplete enhancement results fall back to native captions.
 
-The pairing page uses **unencrypted local HTTP**. Use it only on a trusted home network and close it when finished.
-API keys are not included in APKs or returned by the pairing page. Provider charges and model compatibility are the user's responsibility.
+API keys are not included in APKs and are write-only in the connection editor. Provider charges and model compatibility are the user's responsibility.
 
-## Model connections — enhancement revision t1
-
-These features are part of enhancement revision `t1`; earlier `t0` APKs do not include them.
+## Model connections
 
 - Choose an explicit service/protocol: **OpenAI Chat Completions**, **OpenAI Responses**, **DeepSeek**, **Claude Messages**, **Gemini GenerateContent**, or **custom Chat Completions**. A different URL does not automatically change the protocol.
 - Enter your own model ID and HTTPS endpoint. Platform suggestions do not select a model or verify account access. Gemini accepts a `/models` base URL, or a full `:generateContent` URL matching the configured model. Claude supports an optional workspace ID.
-- New connections default to **automatic low thinking**. The rule set requests thinking off where documented, otherwise a supported low effort or minimum budget. Unknown model IDs and custom Chat connections receive no automatic thinking-control parameter. You can choose provider defaults; the explicit manual DeepSeek control is retained for compatible Chat models.
+- New connections default to **automatic low thinking** and an `8192` max output token limit. The rule set requests thinking off where documented, otherwise a supported low effort or minimum budget. Unknown model IDs and custom Chat connections receive no automatic thinking-control parameter. You can choose provider defaults; the explicit manual DeepSeek control is retained for compatible Chat models.
 - Automatic rules match conservative, exact model IDs, not every model name or snapshot. See [the current rule set](common/src/main/java/com/liskovsoft/smartyoutubetv2/common/subtitle/translation/CaptionModelPolicy.java). A requested control or omitted reasoning text is not proof of zero internal reasoning or zero reasoning charges.
 - Existing connections keep their protocol, thinking choice and stored Key. Changing the endpoint, service or workspace requires replacing or explicitly clearing the Key; it is never silently forwarded to a new target.
-- The phone connection test makes one small synthetic request without saving: normally at most 64 output tokens, or 256 for a known minimum thinking budget, additionally limited by your configured cap. A successful test is not a translation-quality or zero-thinking guarantee.
 
 When channel translation is enabled, caption text and bounded neighboring caption context are sent directly to the configured model service. Audio is not uploaded. Provider processing and retention depend on that service's policies. Removing the connection removes its saved connection details and Key; the separate display preferences remain. The preserved `PRIVACY.md` applies only to upstream's F-Droid build, not to these fork-specific model connections.
 

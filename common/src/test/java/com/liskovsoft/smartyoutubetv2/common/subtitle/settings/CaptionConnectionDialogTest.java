@@ -143,6 +143,7 @@ public class CaptionConnectionDialogTest {
             assertEquals(CaptionService.CUSTOM_CHAT.ordinal(), h.spinner(R.id.caption_ai_service).getSelectedItemPosition());
             assertEquals(0, h.spinner(R.id.caption_ai_thinking).getSelectedItemPosition());
             assertEquals("", h.field(R.id.caption_ai_model).getText().toString());
+            assertEquals("8192", h.field(R.id.caption_ai_output_tokens).getText().toString());
             h.validFields(); h.ok();
             assertEquals(1, h.calls);
             assertEquals(ChatCompletionAdapter.Thinking.AUTO_LOW, h.connection.wire.thinking);

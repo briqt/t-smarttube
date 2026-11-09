@@ -93,8 +93,6 @@ def inspect_apk(plan, path, abi, certificate=None, tools=None):
             native = sorted({name.split("/")[1] for name in libraries})
             expected = {"armeabi-v7a", "arm64-v8a"} if abi == "universal" else {abi}
             upstream.require(expected <= set(native) and (abi == "universal" or set(native) == expected), "apk-abi-mismatch")
-            upstream.require(all("assets/caption-pairing/" + name in names for name in ("index.html", "pair.js", "pair.css")),
-                             "apk-enhancement-assets-missing")
     except (zipfile.BadZipFile, OSError):
         raise upstream.InvalidRelease("invalid-apk-archive") from None
     if certificate is not None:

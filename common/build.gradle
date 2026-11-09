@@ -56,8 +56,6 @@ dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
 
     implementation 'androidx.appcompat:appcompat:' + appCompatXVersion
-    // Offline QR encoder only; 3.3.3 retains the Java 7 baseline for older Android devices.
-    implementation 'com.google.zxing:core:3.3.3'
     testImplementation 'junit:junit:' + junitVersion
 
     implementation project(':sharedutils')

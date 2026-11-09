@@ -33,10 +33,10 @@ public class CaptionPairingWriteTest {
 
     @Test public void closeBeforeCommitDoesNotWriteOrMarkAWriteFailure() {
         try (Stores stores = new Stores()) {
-            CaptionPairingDialog.Session session = new CaptionPairingDialog.Session(() -> true);
+            AtomicBoolean open = new AtomicBoolean(true);
             CaptionConnectionStore.Snapshot before = stores.connection.load();
-            session.close();
-            CaptionSettingsController.ConnectionWrite result = write(stores, before, session::beginCommit);
+            open.set(false);
+            CaptionSettingsController.ConnectionWrite result = write(stores, before, open::get);
             assertTrue(result.result.cancelled);
             assertFalse(result.result.saved);
             assertFalse(result.result.partial);
@@ -49,10 +49,9 @@ public class CaptionPairingWriteTest {
     @Test public void profileChangeBeforeCommitRejectsQueuedOldScopeSave() {
         try (Stores old = new Stores(); Stores next = new Stores()) {
             AtomicBoolean active = new AtomicBoolean(true);
-            CaptionPairingDialog.Session session = new CaptionPairingDialog.Session(active::get);
             CaptionConnectionStore.Snapshot captured = old.connection.load();
             active.set(false);
-            CaptionSettingsController.ConnectionWrite result = write(old, captured, session::beginCommit);
+            CaptionSettingsController.ConnectionWrite result = write(old, captured, active::get);
             assertTrue(result.result.cancelled);
             assertEquals(0, old.connection.load().revision);
             assertEquals(0, next.connection.load().revision);
@@ -63,7 +62,6 @@ public class CaptionPairingWriteTest {
         CountDownLatch started = new CountDownLatch(1), finish = new CountDownLatch(1);
         try (Stores old = new Stores(); Stores next = new Stores()) {
             AtomicBoolean active = new AtomicBoolean(true);
-            CaptionPairingDialog.Session session = new CaptionPairingDialog.Session(active::get);
             CaptionConnectionStore.Snapshot captured = old.connection.load();
             Future<CaptionSettingsController.ConnectionWrite> running = io.submit(() -> CaptionSettingsController.writeConnection(
                     old.connection, old.preferences, captured, config(), CaptionConnectionStore.KeyEdit.REPLACE, () -> {
@@ -71,12 +69,12 @@ public class CaptionPairingWriteTest {
                         try { if (!finish.await(3, TimeUnit.SECONDS)) throw new IllegalStateException("Fixture barrier timed out"); }
                         catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IllegalStateException("Fixture interrupted"); }
                         return KEY;
-                    }, false, session::beginCommit));
+                    }, false, active::get));
             assertTrue(started.await(3, TimeUnit.SECONDS));
-            active.set(false); session.close(); finish.countDown();
+            active.set(false); finish.countDown();
             CaptionSettingsController.ConnectionWrite result = running.get(3, TimeUnit.SECONDS);
             assertTrue("Started writes are not claimed to be revoked", result.result.saved);
-            assertFalse(session.current());
+            assertFalse(active.get());
             assertEquals(1, old.connection.load().revision);
             assertEquals(CaptionConnection.PRIMARY, old.preferences.load().preferences.global.connectionId);
             assertEquals(0, next.connection.load().revision);
@@ -114,11 +112,6 @@ public class CaptionPairingWriteTest {
             assertEquals(expected.revision + 1, first.result.snapshot.revision);
             assertFalse(CaptionSettingsController.connectionUsable(true, 0));
             assertFalse(CaptionSettingsController.connectionUsable(false, 1));
-            assertFalse(CaptionPairingDialog.saveReply(first.result).saved);
-            org.json.JSONObject reply = new org.json.JSONObject(CaptionPairingDialog.saveReply(first.result).json);
-            assertTrue(reply.getBoolean("partial"));
-            assertEquals(Long.toString(first.result.snapshot.revision), reply.getJSONObject("state").getString("revision"));
-            assertFalse(reply.toString().contains(KEY));
             faults.fail.set(false);
             CaptionSettingsController.ConnectionWrite retry = CaptionSettingsController.writeConnection(stores.connection, stores.preferences,
                     first.result.snapshot, first.result.snapshot.connection, CaptionConnectionStore.KeyEdit.KEEP, () -> null, false, () -> true);

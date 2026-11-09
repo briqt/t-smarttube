@@ -47,7 +47,6 @@ public final class CaptionConnectionDialog {
                 R.string.caption_ai_service_openai_responses, R.string.caption_ai_service_deepseek,
                 R.string.caption_ai_service_claude, R.string.caption_ai_service_gemini});
         service.setSelection(selectedService[0].ordinal());
-        note(context, fields, R.string.caption_ai_service_hint);
         EditText endpoint = field(context, fields, R.string.caption_ai_endpoint, R.id.caption_ai_endpoint,
                 previous == null ? "" : previous.wire.endpoint.toString(), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         TextView endpointHint = note(context, fields, R.string.caption_ai_gemini_endpoint_hint);
@@ -70,12 +69,11 @@ public final class CaptionConnectionDialog {
         key.setSaveEnabled(false);
         if (Build.VERSION.SDK_INT >= 26) key.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
         EditText tokens = field(context, fields, R.string.caption_ai_output_tokens, R.id.caption_ai_output_tokens,
-                Integer.toString(previous == null ? 1024 : previous.wire.maxOutputTokens), InputType.TYPE_CLASS_NUMBER);
+                Integer.toString(previous == null ? 8192 : previous.wire.maxOutputTokens), InputType.TYPE_CLASS_NUMBER);
         Spinner thinking = selector(context, fields, R.string.caption_ai_thinking, R.id.caption_ai_thinking);
         thinkingChoices(context, thinking, selectedService[0], previous == null ? ChatCompletionAdapter.Thinking.AUTO_LOW : previous.wire.thinking);
         TextView policy = note(context, fields, R.string.caption_ai_policy_unknown);
         policy.setId(R.id.caption_ai_thinking_policy);
-        note(context, fields, R.string.caption_ai_thinking_notice);
         Runnable updatePolicy = () -> policy.setText(policyText(CaptionModelPolicy.decision(selectedService[0],
                 model.getText().toString().trim(), THINKING[thinking.getSelectedItemPosition()])));
         thinking.setOnItemSelectedListener(selection(updatePolicy));

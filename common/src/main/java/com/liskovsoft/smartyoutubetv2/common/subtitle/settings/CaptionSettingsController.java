@@ -18,9 +18,6 @@ import com.liskovsoft.smartyoutubetv2.common.subtitle.presentation.NativeCueComp
 import com.liskovsoft.smartyoutubetv2.common.subtitle.source.CaptionSource;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionConnection;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionConnectionStore;
-import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionConnectionEdit;
-import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionConnectionProbe;
-import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.ChatTranslationClient;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionPreferenceStore;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionPreferences;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.ChannelPreferenceEditor;
@@ -74,7 +71,6 @@ public class CaptionSettingsController extends BasePlayerController implements A
     private UiOptionItem mDetailsConnection;
     private CaptionPreferenceStore.Snapshot mPreferences;
     private CaptionConnectionStore.Snapshot mConnection;
-    private CaptionPairingDialog mPairing;
     private CaptionPreferences.Global mGlobal = CaptionPreferences.Global.defaults();
 
     @Override public void onInit() {
@@ -90,7 +86,6 @@ public class CaptionSettingsController extends BasePlayerController implements A
         if (mAppPrefs == null || mIo == null || mIo.isShutdown()) return;
         Owner previous = mOwner;
         if (previous != null) previous.active = false;
-        closePairing();
         Owner owner = new Owner();
         mOwner = owner;
         mPreferences = null;
@@ -154,10 +149,9 @@ public class CaptionSettingsController extends BasePlayerController implements A
     @Override public void onEngineInitialized() { trace("engine_initialized", null); applyBridge(); }
     @Override public void onViewCreated() { mViewActive = true; trace("view_created", null); }
     @Override public void onViewResumed() { mViewActive = true; trace("view_resumed", null); restoreAfterLoad(); applyBridge(); }
-    @Override public void onEngineReleased() { mViewGeneration++; closePairing(); trace("engine_released", null); clearDetails(); stopBridge(); mSourceReady = false; }
-    @Override public void onViewDestroyed() { mViewGeneration++; mViewActive = false; closePairing(); trace("view_destroyed", null); clearDetails(); stopBridge(); }
+    @Override public void onEngineReleased() { mViewGeneration++; trace("engine_released", null); clearDetails(); stopBridge(); mSourceReady = false; }
+    @Override public void onViewDestroyed() { mViewGeneration++; mViewActive = false; trace("view_destroyed", null); clearDetails(); stopBridge(); }
     @Override public void onFinish() {
-        closePairing();
         clearDetails();
         mViewGeneration++;
         mViewActive = false;
@@ -397,9 +391,6 @@ public class CaptionSettingsController extends BasePlayerController implements A
             });
         });
         dialog.appendSingleButton(mDetailsConnection);
-        dialog.appendSingleButton(UiOptionItem.from(getContext().getString(R.string.caption_pairing_title), option -> {
-            if (globalMenuCurrent(token)) showPairing(dialog.getContext(), owner, token);
-        }));
         dialog.appendSingleButton(UiOptionItem.from(getContext().getString(R.string.caption_ai_retry), option -> { if (globalMenuCurrent(token)) retry(); }));
         dialog.showDialog(getContext().getString(R.string.caption_ai_details));
     }
@@ -436,49 +427,27 @@ public class CaptionSettingsController extends BasePlayerController implements A
             if (globalMenuCurrent(token)) changeGlobal(before -> new CaptionPreferences.Global(before.targetLanguage, mode, order, before.connectionId));
         }, mGlobal.mode == mode && (mode != NativeCueComposer.Mode.BILINGUAL || mGlobal.order == order)));
     }
-    private void closePairing() {
-        if (mPairing != null) { mPairing.close(); mPairing = null; }
-    }
-    private void showPairing(Context context, Owner owner, Object token) {
-        closePairing();
-        CaptionConnectionStore.Snapshot[] expected = {mConnection};
-        mPairing = CaptionPairingDialog.show(context, () -> owner.active, new CaptionPairingDialog.Host() {
-            @Override public void read(CaptionPairingDialog.Read completion) {
-                if (!globalMenuCurrent(token)) { completion.complete(null); return; }
-                if (!execute(() -> {
-                    CaptionConnectionStore.Snapshot snapshot = null;
-                    try { if (owner.active) snapshot = owner.connection.load(); }
-                    catch (RuntimeException ignored) { }
-                    CaptionConnectionStore.Snapshot loaded = snapshot;
-                    mUi.post(() -> {
-                        if (!globalMenuCurrent(token)) { completion.complete(null); return; }
-                        if (loaded != null) { expected[0] = loaded; mConnection = loaded; updateDetails(); }
-                        completion.complete(loaded);
-                    });
-                })) completion.complete(null);
-            }
-            @Override public void save(CaptionConnectionEdit edit, CaptionPairingDialog.Session session, CaptionPairingDialog.Saved completion) {
-                if (!globalMenuCurrent(token) || !session.current()) {
-                    completion.complete(new CaptionPairingDialog.SaveResult(false, false, true, "CANCELLED", expected[0])); return;
-                }
-                if (expected[0] == null || edit.revision != expected[0].revision) {
-                    completion.complete(new CaptionPairingDialog.SaveResult(false, false, false, "REVISION_CONFLICT", expected[0])); return;
-                }
-                saveConnection(owner, expected, edit.connection, edit.keyEdit, edit::replacement,
-                        edit.operation == CaptionConnectionEdit.Operation.CLEAR, session::beginCommit, completion);
-            }
-            @Override public ChatTranslationClient.Job probe(CaptionConnectionEdit edit, CaptionConnectionStore.Snapshot snapshot) {
-                if (!globalMenuCurrent(token)) return null;
-                return CaptionConnectionProbe.create(edit, snapshot, mGlobal.targetLanguage == null ? "en" : mGlobal.targetLanguage);
-            }
-        });
-    }
     interface WriteAllowed { boolean begin(); }
     interface KeySource { String get(); }
+    interface Saved { void complete(SaveResult result); }
+    static final class SaveResult {
+        final boolean saved;
+        final boolean partial;
+        final boolean cancelled;
+        final String code;
+        final CaptionConnectionStore.Snapshot snapshot;
+        SaveResult(boolean saved, boolean partial, boolean cancelled, String code, CaptionConnectionStore.Snapshot snapshot) {
+            this.saved = saved;
+            this.partial = partial;
+            this.cancelled = cancelled;
+            this.code = code;
+            this.snapshot = snapshot;
+        }
+    }
     static final class ConnectionWrite {
-        final CaptionPairingDialog.SaveResult result;
+        final SaveResult result;
         final CaptionPreferenceStore.Snapshot preferences;
-        ConnectionWrite(CaptionPairingDialog.SaveResult result, CaptionPreferenceStore.Snapshot preferences) {
+        ConnectionWrite(SaveResult result, CaptionPreferenceStore.Snapshot preferences) {
             this.result = result; this.preferences = preferences;
         }
     }
@@ -488,7 +457,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
     static ConnectionWrite writeConnection(CaptionConnectionStore store, CaptionPreferenceStore preferences,
             CaptionConnectionStore.Snapshot expected, CaptionConnection connection, CaptionConnectionStore.KeyEdit edit,
             KeySource key, boolean clear, WriteAllowed allowed) {
-        if (!allowed.begin()) return new ConnectionWrite(new CaptionPairingDialog.SaveResult(false, false, true, "CANCELLED", expected), null);
+        if (!allowed.begin()) return new ConnectionWrite(new SaveResult(false, false, true, "CANCELLED", expected), null);
         CaptionConnectionStore.Snapshot saved = null;
         CaptionConnectionStore.Snapshot state = expected;
         CaptionPreferenceStore.Snapshot prefs = null;
@@ -496,17 +465,17 @@ public class CaptionSettingsController extends BasePlayerController implements A
             // Recovery may itself write: the cancellation/owner guard precedes it, not just save().
             CaptionConnectionStore.Snapshot recovered = store.recoverFailedWrite();
             if (recovered == null || !recovered.valid && !clear)
-                return new ConnectionWrite(new CaptionPairingDialog.SaveResult(false, false, false, "SAVE_FAILED", recovered), null);
+                return new ConnectionWrite(new SaveResult(false, false, false, "SAVE_FAILED", recovered), null);
             state = recovered;
             if (expected == null || recovered.revision != expected.revision)
-                return new ConnectionWrite(new CaptionPairingDialog.SaveResult(false, false, false, "REVISION_CONFLICT", recovered), null);
+                return new ConnectionWrite(new SaveResult(false, false, false, "REVISION_CONFLICT", recovered), null);
             // A failed acknowledgement can carry valid=false. After the owner gate and exact original
             // revision check, use this store's recovered snapshot for CAS; never adopt a newer revision.
             saved = clear ? store.clear(recovered) : store.save(recovered, connection, edit, key.get());
             if (saved == null) {
                 state = store.load();
                 String code = state.revision != expected.revision ? "REVISION_CONFLICT" : "SAVE_FAILED";
-                return new ConnectionWrite(new CaptionPairingDialog.SaveResult(false, false, false, code, state), null);
+                return new ConnectionWrite(new SaveResult(false, false, false, code, state), null);
             }
             state = saved;
             prefs = preferences.recoverFailedWrite();
@@ -520,7 +489,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
         }
         boolean success = saved != null && prefs != null && prefs.valid;
         boolean partial = saved != null && !success;
-        return new ConnectionWrite(new CaptionPairingDialog.SaveResult(success, partial, false,
+        return new ConnectionWrite(new SaveResult(success, partial, false,
                 success ? "SAVED" : partial ? "PARTIAL" : "SAVE_FAILED", state), prefs);
     }
     private void saveConnection(Owner owner, CaptionConnectionStore.Snapshot[] expected, CaptionConnection connection,
@@ -529,7 +498,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
                 result -> completion.complete(result.saved));
     }
     private void saveConnection(Owner owner, CaptionConnectionStore.Snapshot[] expected, CaptionConnection connection,
-            CaptionConnectionStore.KeyEdit edit, KeySource key, boolean clear, WriteAllowed allowed, CaptionPairingDialog.Saved completion) {
+            CaptionConnectionStore.KeyEdit edit, KeySource key, boolean clear, WriteAllowed allowed, Saved completion) {
         CaptionConnectionStore.Snapshot captured = expected[0];
         mConnectionSaves++;
         mSavedFeedback = false;
@@ -541,7 +510,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
             mUi.post(() -> {
                 if (owner != mOwner || !owner.active) { completion.complete(written.result); return; }
                 mConnectionSaves--;
-                CaptionPairingDialog.SaveResult result = written.result;
+                SaveResult result = written.result;
                 if (!result.cancelled) {
                     if (result.snapshot != null) { mConnection = result.snapshot; expected[0] = result.snapshot; }
                     mConnectionUnsaved = !result.saved;
@@ -562,7 +531,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
             boolean cancelled = !owner.active || !allowed.begin();
             if (!cancelled) { mConnectionUnsaved = true; message(R.string.caption_ai_save_failed); }
             applyBridge(); updateDetails();
-            completion.complete(new CaptionPairingDialog.SaveResult(false, false, cancelled, cancelled ? "CANCELLED" : "SAVE_FAILED", captured));
+            completion.complete(new SaveResult(false, false, cancelled, cancelled ? "CANCELLED" : "SAVE_FAILED", captured));
         }
     }
     private boolean execute(Runnable task) { return execute(task, true); }
