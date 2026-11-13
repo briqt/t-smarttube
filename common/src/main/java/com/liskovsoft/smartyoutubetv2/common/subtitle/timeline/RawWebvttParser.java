@@ -12,6 +12,17 @@ public final class RawWebvttParser {
     private static final Pattern TIMING = Pattern.compile("([^ \\t]+)[ \\t]+-->[ \\t]+([^ \\t]+)(?:[ \\t]+(.*))?");
     private static final Pattern TIMESTAMP = Pattern.compile("(?:([0-9]{2,}):)?([0-9]{2}):([0-9]{2})\\.([0-9]{3})");
 
+    /** 仅携带时间与长度标量，帮助诊断不合规标记；不携带字幕正文。 */
+    public static final class TimestampRejection extends IllegalArgumentException {
+        public final int cueIndex, runCharacters;
+        public final long cueStartUs, previousUs, currentUs, cueEndUs;
+        private TimestampRejection(int cueIndex, long cueStartUs, long previousUs, long currentUs, long cueEndUs, int runCharacters) {
+            super("Unsupported or invalid subtitle document");
+            this.cueIndex = cueIndex; this.cueStartUs = cueStartUs; this.previousUs = previousUs;
+            this.currentUs = currentUs; this.cueEndUs = cueEndUs; this.runCharacters = runCharacters;
+        }
+    }
+
     private RawWebvttParser() {
     }
 
@@ -21,6 +32,15 @@ public final class RawWebvttParser {
 
     /** The caller supplies an already-resolved sample offset; X-TIMESTAMP-MAP is not supported. */
     public static RawTimeline parse(byte[] source, long effectiveOffsetUs, RawTimeline.Limits limits) {
+        return parse(source, effectiveOffsetUs, limits, false);
+    }
+
+    /** 原生可读轨道：仅不可信的词级标记退为原cue时段，不修改源字节、显示文本或cue时钟。 */
+    public static RawTimeline parseForNativePlayback(byte[] source, long effectiveOffsetUs, RawTimeline.Limits limits) {
+        return parse(source, effectiveOffsetUs, limits, true);
+    }
+
+    private static RawTimeline parse(byte[] source, long effectiveOffsetUs, RawTimeline.Limits limits, boolean nativeCompatible) {
         if (source == null || limits == null || source.length == 0 || source.length > limits.documentBytes) {
             throw RawTimeline.invalid();
         }
@@ -97,8 +117,16 @@ public final class RawWebvttParser {
                 payload.append(lines[line++]);
                 first = false;
             }
-            RawTimeline.Cue cue = text(cues.size(), id, startUs, endUs, effectiveOffsetUs,
-                    payload.toString(), limits.textRuns - totalRuns, settings);
+            RawTimeline.Cue cue;
+            try {
+                cue = text(cues.size(), id, startUs, endUs, effectiveOffsetUs,
+                        payload.toString(), limits.textRuns - totalRuns, settings, true);
+            } catch (TimestampRejection inexact) {
+                if (!nativeCompatible) throw inexact;
+                // 仍重新校验时间标记语法、所有标签及嵌套；只有词级先后/范围信息不再声称可信。
+                cue = text(cues.size(), id, startUs, endUs, effectiveOffsetUs,
+                        payload.toString(), limits.textRuns - totalRuns, settings, false);
+            }
             totalRuns += cue.runs.size();
             if (totalRuns > limits.textRuns) throw RawTimeline.invalid();
             cues.add(cue);
@@ -220,7 +248,7 @@ public final class RawWebvttParser {
     }
 
     private static RawTimeline.Cue text(int sourceIndex, String id, long startUs, long endUs,
-                                         long offsetUs, String payload, int remainingRuns, Map<String, String> settings) {
+                                         long offsetUs, String payload, int remainingRuns, Map<String, String> settings, boolean mapInlineWindows) {
         StringBuilder text = new StringBuilder();
         List<String> tags = new ArrayList<>();
         List<RawTimeline.TextRun> runs = new ArrayList<>();
@@ -239,14 +267,18 @@ public final class RawWebvttParser {
                 String tag = payload.substring(i + 1, end);
                 if (!tag.isEmpty() && tag.charAt(0) >= '0' && tag.charAt(0) <= '9') {
                     long nextUs = timestamp(tag);
-                    if (nextUs <= windowStartUs || nextUs >= endUs) {
-                        throw RawTimeline.invalid();
+                    if (!mapInlineWindows) { i = end + 1; continue; }
+                    if (nextUs <= startUs || nextUs < windowStartUs || nextUs >= endUs) {
+                        throw new TimestampRejection(sourceIndex, startUs, windowStartUs, nextUs, endUs, text.length() - runStart);
                     }
-                    window(runs, runStart, text.length(), activeStartUs, activeEndUs,
-                            RawTimeline.add(windowStartUs, offsetUs), RawTimeline.add(nextUs, offsetUs), remainingRuns);
+                    // 同时刻的词共用下一有效窗口；不造零时长片段，也不丢两标记之间的文本。
+                    if (nextUs > windowStartUs) {
+                        window(runs, runStart, text.length(), activeStartUs, activeEndUs,
+                                RawTimeline.add(windowStartUs, offsetUs), RawTimeline.add(nextUs, offsetUs), remainingRuns);
+                        windowStartUs = nextUs;
+                        runStart = text.length();
+                    }
                     annotated = true;
-                    windowStartUs = nextUs;
-                    runStart = text.length();
                 } else if (tag.startsWith("/")) {
                     if (tags.isEmpty() || !tags.remove(tags.size() - 1).equals(tag.substring(1))) {
                         throw RawTimeline.invalid();

@@ -12,6 +12,7 @@ the upstream download links in the preserved documentation below install the ori
 - Configure a model provider, endpoint, model ID and API key through the native connection editor.
 - Existing subtitle selection, NONE, styling, size and position controls remain available. Turning AI off restores the native subtitle path.
 - Translation uses available text captions; it does not upload audio or create captions for videos without them. Unsupported or incomplete enhancement results fall back to native captions.
+- 对 WebVTT 自动字幕的重复或不可信词级时间标记保守兼容：保留原始文字与 cue 时段，仅受影响的 cue 放弃精细词时钟，不因单条异常丢弃整轨增强输入。
 
 API keys are not included in APKs and are write-only in the connection editor. Provider charges and model compatibility are the user's responsibility.
 

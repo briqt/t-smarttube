@@ -48,6 +48,7 @@ public final class CaptionOutputBridge {
     private boolean mEnabled;
     private boolean mVisible = true;
     private boolean mClosed;
+    private String mDiagnosticState;
 
     public static CaptionOutputBridge create(CaptionObservation observation, TextOutput output, Position position) {
         Handler handler = new Handler(Looper.getMainLooper());
@@ -251,6 +252,7 @@ public final class CaptionOutputBridge {
         mObservation.setEnhancementEnabled(active);
         mCoordinator.setVisible(mVisible);
         if (!active || !mObservation.isOutputCurrent(mStamp)) {
+            trace(!active ? "inactive" : "output_not_current");
             mCoordinator.setRequesting(false);
             mOutput.onCues(mNative);
             arm();
@@ -259,6 +261,7 @@ public final class CaptionOutputBridge {
         mObservation.ensureEnhancementInput();
         CaptionInputSession.Selection selection = mInputs.tick(mWindow);
         if (selection == null) {
+            trace("no_input_selection");
             mCoordinator.setRequesting(false);
             mOutput.onCues(mNative);
             arm();
@@ -299,7 +302,18 @@ public final class CaptionOutputBridge {
             }));
         }
         if (!composed[0]) mOutput.onCues(mNative);
+        trace(composed[0] ? "bilingual" : frame == null ? "no_frame" : "not_composed");
         arm();
+    }
+
+    private void trace(String stage) {
+        if (!com.liskovsoft.smartyoutubetv2.common.subtitle.CaptionRuntimeDiagnostics.enabled()) return;
+        String state = "bridge stage=" + stage + " enabled=" + mEnabled + " template=" + (mTemplate != null) +
+                " visible=" + mVisible + " stamped=" + (mStamp != null) +
+                " raw=" + mRaw.size() + " native=" + mNative.size() + " " + mCoordinator.diagnosticState();
+        if (state.equals(mDiagnosticState)) return;
+        mDiagnosticState = state;
+        com.liskovsoft.smartyoutubetv2.common.subtitle.CaptionRuntimeDiagnostics.state(state);
     }
 
     private void arm() {

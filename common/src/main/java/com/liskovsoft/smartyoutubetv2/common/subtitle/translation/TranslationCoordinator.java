@@ -242,6 +242,14 @@ public final class TranslationCoordinator {
         mOwnedExecutor = ownedExecutor;
     }
 
+    /** 仅内部标量；不返回源文、译文、模型地址或凭据。 */
+    public synchronized String diagnosticState() {
+        return "requesting=" + mRequesting + " profile=" + (mProfile != null) +
+                " snapshot=" + (mSnapshot != null) + " blocked=" + mBlocked +
+                " running=" + (mRunning != null) + " jobs=" + mJobs +
+                " keys=" + mKeys.size() + " window=" + mWindow.size();
+    }
+
     public void configure(Profile profile) {
         Work cancel;
         synchronized (this) {
@@ -619,6 +627,11 @@ public final class TranslationCoordinator {
         mRunning = null;
         long now = now();
         expireLocked(now);
+        com.liskovsoft.smartyoutubetv2.common.subtitle.CaptionRuntimeDiagnostics.state(
+                "translation status=" + (result == null ? "NO_RESULT" : result.status) +
+                        " http=" + (result == null ? 0 : result.httpCode) +
+                        " calls=" + (result == null ? 0 : result.calls) +
+                        " translated=" + (result == null ? 0 : result.translations.size()));
         boolean matched = result != null && result.batch == ticket.batch && result.status != ChatTranslationClient.Status.CANCELLED;
         boolean terminal = matched && (result.completionState == ChatCompletionAdapter.State.REFUSED ||
                 result.completionState == ChatCompletionAdapter.State.FILTERED ||

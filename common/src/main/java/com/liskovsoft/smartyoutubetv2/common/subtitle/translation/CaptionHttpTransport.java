@@ -112,6 +112,9 @@ final class CaptionHttpTransport {
                 if (key == null || key.isEmpty() || key.length() > 8192 || !headerSafe(key)) {
                     return new Result(cancelled() ? Status.CANCELLED : Status.AUTH_ERROR, null, 0, 0, null);
                 }
+                if (!com.liskovsoft.smartyoutubetv2.common.subtitle.CaptionRuntimeDiagnostics.admitProbeExchange()) {
+                    return new Result(Status.INVALID, null, 0, 0, null);
+                }
                 Request.Builder requestBuilder = new Request.Builder().url(mConfig.requestEndpoint())
                         .header("Accept", "application/json").tag(WireBudget.class, new WireBudget())
                         .post(RequestBody.create(MediaType.parse("application/json; charset=utf-8"), mBody));
@@ -141,6 +144,8 @@ final class CaptionHttpTransport {
                 synchronized (this) { mCall = null; }
             }
             if (cancelled()) { status = Status.CANCELLED; bytes = null; }
+            com.liskovsoft.smartyoutubetv2.common.subtitle.CaptionRuntimeDiagnostics.state(
+                    "exchange status=" + status + " http=" + code + " calls=" + calls);
             return new Result(status, bytes, calls, code, retryAfter);
         }
     }

@@ -3,6 +3,12 @@
 This log covers the enhancement fork. Upstream release history remains available
 in [SmartTube releases](https://github.com/yuliskov/SmartTube/releases).
 
+## 增强修订 10
+
+- 修复 WebVTT 相同词级时间标记导致整条字幕无法增强的问题；同时刻文本共用时间窗口，不丢字或改写原始字幕时钟。
+- 对词级时间先后或范围不可信、但原生可读的 cue，仅退为原 cue 时间区间；正常 cue 保留词级映射，格式、安全与资源预算检查继续生效。
+- 增加默认关闭的 ADB 脱敏运行诊断，仅记录内部状态、计数与 HTTP 状态，不记录字幕正文、请求地址或密钥。
+
 ## Enhancement revision 4
 
 - Remove LAN phone-pairing server, QR code dialog, web assets, and ZXing dependency to keep configuration purely native and lightweight.

@@ -112,9 +112,14 @@ public class RawWebvttTimingTest {
     }
 
     @Test
-    public void timestampsMustBeStrictlyIncreasingAndStrictlyInsideTheCue() throws Exception {
+    public void timestampsMustBeNondecreasingAndStrictlyInsideTheCue() throws Exception {
+        RawTimeline.Cue shared = parse("A<00:02.000>B<00:02.000>C");
+        assertEquals("ABC", shared.mappingText);
+        assertEquals(2, shared.runs.size());
+        run(shared, 0, "A", 0, 2_000_000);
+        run(shared, 1, "BC", 2_000_000, 4_000_000);
         for (String text : new String[]{"A<00:00.000>B", "A<00:04.000>B", "A<00:05.000>B",
-                "A<00:02.000>B<00:02.000>C", "A<00:02.000>B<00:01.000>C",
+                "A<00:02.000>B<00:01.000>C",
                 "A<00:60.000>B", "A<00:01.0001>B", "A<0:01.000>B"}) {
             rejected(text);
         }

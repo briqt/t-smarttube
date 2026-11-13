@@ -283,7 +283,10 @@ public final class CaptionObservation implements SubtitleDecoderFactory {
         ThreadPoolExecutor worker = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(2), runnable -> new Thread(runnable, "caption-observation"),
                 new ThreadPoolExecutor.AbortPolicy());
-        Sink sink = diagnostics ? report -> Log.d("CaptionObservation", report.safeLine()) : null;
+        Sink sink = diagnostics || com.liskovsoft.smartyoutubetv2.common.subtitle.CaptionRuntimeDiagnostics.enabled() ? report -> {
+            if (diagnostics) Log.d("CaptionObservation", report.safeLine());
+            com.liskovsoft.smartyoutubetv2.common.subtitle.CaptionRuntimeDiagnostics.state("input " + report.safeLine());
+        } : null;
         return new CaptionObservation(SubtitleDecoderFactory.DEFAULT, worker, sink, worker);
     }
 
@@ -453,6 +456,10 @@ public final class CaptionObservation implements SubtitleDecoderFactory {
     public synchronized SubtitleDecoder createDecoder(Format format) {
         SubtitleDecoder decoder = mDelegate.createDecoder(format);
         Binding binding = mFormats.get(format);
+        com.liskovsoft.smartyoutubetv2.common.subtitle.CaptionRuntimeDiagnostics.state(
+                "decoder bound=" + (binding != null) + " formats=" + mFormats.size() +
+                        " vtt=" + "text/vtt".equals(format.sampleMimeType) +
+                        " ttml=" + "application/ttml+xml".equals(format.sampleMimeType));
         clearTrack();
         if (mClosed || binding == null || !("text/vtt".equals(format.sampleMimeType) ||
                 "application/ttml+xml".equals(format.sampleMimeType))) return decoder;
@@ -585,7 +592,7 @@ public final class CaptionObservation implements SubtitleDecoderFactory {
                 TimelineState state = TimelineState.SKIPPED;
                 if (bytes != null && "text/vtt".equals(lease.mime)) {
                     try {
-                        raw = RawWebvttParser.parse(bytes, input.offsetUs, TIMELINE_LIMITS);
+                        raw = RawWebvttParser.parseForNativePlayback(bytes, input.offsetUs, TIMELINE_LIMITS);
                         AsrTranscriptPlanner.Analysis analysis = AsrTranscriptPlanner.prepare(raw, lease.binding.source,
                                 TIMELINE_LIMITS, GROUP_LIMITS);
                         if (analysis.transcript != null && analysis.groups != null) {
@@ -597,6 +604,7 @@ public final class CaptionObservation implements SubtitleDecoderFactory {
                         }
                         state = TimelineState.ACCEPTED;
                     } catch (IllegalArgumentException ignored) {
+                        com.liskovsoft.smartyoutubetv2.common.subtitle.CaptionRuntimeDiagnostics.rejection("raw", ignored);
                         raw = null;
                         transcript = null;
                         groups = null;
@@ -611,7 +619,10 @@ public final class CaptionObservation implements SubtitleDecoderFactory {
                         transcript = MappedTranscript.fromRaw(raw, TIMELINE_LIMITS.textRuns);
                         groups = SemanticGroupPlanner.preserve(transcript, GROUP_LIMITS);
                         state = TimelineState.ACCEPTED;
-                    } catch (IllegalArgumentException ignored) { raw = null; transcript = null; groups = null; }
+                    } catch (IllegalArgumentException ignored) {
+                        com.liskovsoft.smartyoutubetv2.common.subtitle.CaptionRuntimeDiagnostics.rejection("projection", ignored);
+                        raw = null; transcript = null; groups = null;
+                    }
                 }
                 synchronized (CaptionObservation.this) {
                     if (!current(lease, revision)) return;
