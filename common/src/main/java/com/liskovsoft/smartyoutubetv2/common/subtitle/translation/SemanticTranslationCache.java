@@ -15,7 +15,7 @@ import java.util.Map;
 
 /** Coordinator-owned bounded frozen data and completed Strings, never old document/request objects. */
 final class SemanticTranslationCache {
-    private static final int REQUEST_CONTRACT = 3; // Batch-level context & marker protocol contract.
+    private static final int REQUEST_CONTRACT = 4; // Batch-level context, single-line normalization & marker protocol contract.
     private static final int MAPPING_CONTRACT = 2; // Primary source ranges, not later display echoes.
     private static final Charset UTF8 = Charset.forName("UTF-8");
 

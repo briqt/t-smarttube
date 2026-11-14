@@ -1,12 +1,14 @@
 package com.liskovsoft.smartyoutubetv2.common.subtitle.settings;
 
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.os.Build;
 import android.text.InputFilter;
 import android.text.InputType;
 import android.text.method.PasswordTransformationMethod;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
@@ -16,7 +18,11 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
+import androidx.core.content.ContextCompat;
+import androidx.core.view.ViewCompat;
 import com.liskovsoft.sharedutils.helpers.KeyHelpers;
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.smartyoutubetv2.common.R;
@@ -86,6 +92,7 @@ public final class CaptionConnectionDialog {
         advancedToggle.setId(R.id.caption_ai_advanced_toggle);
         advancedToggle.setAllCaps(false);
         advancedToggle.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        advancedToggle.setTextColor(ContextCompat.getColor(dialogContext, R.color.dialog_text_color));
         advancedToggle.setBackgroundResource(R.drawable.dialog_item_background);
         advancedToggle.setFocusable(true);
         advancedToggle.setPadding(sectionGap, sectionGap, sectionGap, sectionGap);
@@ -275,6 +282,7 @@ public final class CaptionConnectionDialog {
     private static TextView note(Context context, LinearLayout fields, int text, int topMargin) {
         TextView note = new TextView(context);
         note.setText(text);
+        note.setTextColor(ContextCompat.getColor(context, R.color.dialog_text_color));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         params.topMargin = topMargin;
@@ -288,14 +296,33 @@ public final class CaptionConnectionDialog {
         Spinner input = new Spinner(context);
         input.setId(id);
         input.setSaveEnabled(false);
+        input.setBackgroundResource(R.drawable.dialog_item_background);
+        input.setPopupBackgroundResource(R.color.dialog_bg_color);
         fields.addView(input, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         return input;
     }
 
     private static void choices(Context context, Spinner input, int[] labels) {
+        int textColor = ContextCompat.getColor(context, R.color.dialog_text_color);
         String[] options = new String[labels.length];
         for (int i = 0; i < labels.length; i++) options[i] = context.getString(labels[i]);
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(context, android.R.layout.simple_spinner_item, options);
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(context, android.R.layout.simple_spinner_item, options) {
+            @NonNull
+            @Override
+            public View getView(int position, @Nullable View convertView, @NonNull ViewGroup parent) {
+                View view = super.getView(position, convertView, parent);
+                if (view instanceof TextView) ((TextView) view).setTextColor(textColor);
+                return view;
+            }
+
+            @Override
+            public View getDropDownView(int position, @Nullable View convertView, @NonNull ViewGroup parent) {
+                View view = super.getDropDownView(position, convertView, parent);
+                if (view instanceof TextView) ((TextView) view).setTextColor(textColor);
+                view.setBackgroundResource(R.drawable.dialog_item_background);
+                return view;
+            }
+        };
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         input.setAdapter(adapter);
     }
@@ -324,6 +351,10 @@ public final class CaptionConnectionDialog {
                         id == R.id.caption_ai_model ? 256 : id == R.id.caption_ai_output_tokens ? 7 : 4096)});
         input.setSingleLine(true);
         input.setSaveEnabled(false);
+        int textColor = ContextCompat.getColor(context, R.color.dialog_text_color);
+        input.setTextColor(textColor);
+        input.setHintTextColor(ContextCompat.getColor(context, R.color.white_20));
+        ViewCompat.setBackgroundTintList(input, ColorStateList.valueOf(textColor));
         input.setHint(hint);
         input.setText(value);
         KeyHelpers.fixEnterKey(input);

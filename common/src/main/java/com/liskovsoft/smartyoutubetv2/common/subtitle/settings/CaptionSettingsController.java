@@ -3,7 +3,6 @@ package com.liskovsoft.smartyoutubetv2.common.subtitle.settings;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
-import androidx.appcompat.app.AlertDialog;
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemMetadata;
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.smartyoutubetv2.common.R;
@@ -517,7 +516,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
         mMenuTarget = (UiOptionItem) UiOptionItem.from(targetTitle(), option -> {
             if (!globalMenuCurrent(token)) return;
             if (mPreferences == null || mConnection == null) { message(R.string.caption_ai_loading); return; }
-            showTargetDialog(dialog.getContext(), token);
+            showTargetDialog(dialog, token);
         });
         dialog.appendSingleButton(mMenuTarget);
 
@@ -530,7 +529,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
         mMenuBatchSize = (UiOptionItem) UiOptionItem.from(batchSizeTitle(), option -> {
             if (!globalMenuCurrent(token)) return;
             if (mPreferences == null || mConnection == null) { message(R.string.caption_ai_loading); return; }
-            showBatchSizeDialog(dialog.getContext(), token);
+            showBatchSizeDialog(dialog, token);
         });
         dialog.appendSingleButton(mMenuBatchSize);
 
@@ -546,103 +545,97 @@ public class CaptionSettingsController extends BasePlayerController implements A
         dialog.appendSingleButton(mMenuConnection);
     }
 
-    private void showTargetDialog(Context dialogContext, Object token) {
-        CharSequence[] items = new CharSequence[TARGET_CODES.length + 1];
+    private void showTargetDialog(AppDialogPresenter dialog, Object token) {
+        Context dialogContext = dialog.getContext();
         int checked = -1;
         String currentTarget = mGlobal.targetLanguage;
         for (int i = 0; i < TARGET_CODES.length; i++) {
-            items[i] = dialogContext.getString(TARGET_LABELS[i]);
-            if (TARGET_CODES[i].equals(currentTarget)) checked = i;
+            if (TARGET_CODES[i].equals(currentTarget)) { checked = i; break; }
         }
         String customLabel = dialogContext.getString(R.string.caption_ai_lang_custom);
         if (currentTarget != null && checked < 0) {
             checked = TARGET_CODES.length;
             customLabel = customLabel + " (" + currentTarget + ")";
         }
-        items[TARGET_CODES.length] = customLabel;
         int selectedIndex = checked;
-        AlertDialog pickerDialog = new AlertDialog.Builder(dialogContext, R.style.AppDialog)
-                .setTitle(R.string.caption_ai_target)
-                .setSingleChoiceItems(items, selectedIndex, (picker, which) -> {
-                    picker.dismiss();
-                    if (!globalMenuCurrent(token)) return;
-                    if (which >= 0 && which < TARGET_CODES.length) {
-                        String code = TARGET_CODES[which];
-                        changeGlobal(before -> new CaptionPreferences.Global(code, before.mode, before.order, before.connectionId, before.batchSize));
-                    } else {
-                        String initial = selectedIndex == TARGET_CODES.length && currentTarget != null ? currentTarget : "";
-                        SimpleEditDialog.show(dialogContext, getContext().getString(R.string.caption_ai_target),
-                                getContext().getString(R.string.caption_ai_lang_custom_hint), initial, raw -> {
-                                    if (!globalMenuCurrent(token)) return true;
-                                    String value = raw == null ? "" : raw.trim();
-                                    try { new CaptionPreferences.Global(value, mGlobal.mode, mGlobal.order, mGlobal.connectionId, mGlobal.batchSize); }
-                                    catch (IllegalArgumentException ignored) { message(R.string.caption_ai_invalid_language); return false; }
-                                    changeGlobal(before -> new CaptionPreferences.Global(value, before.mode, before.order, before.connectionId, before.batchSize));
-                                    return true;
-                                });
-                    }
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .create();
-        try {
-            pickerDialog.show();
-        } catch (RuntimeException e) {
-            MessageHelpers.showMessage(dialogContext, e.getMessage());
+        List<OptionItem> options = new ArrayList<>(TARGET_CODES.length + 1);
+        for (int i = 0; i < TARGET_CODES.length; i++) {
+            String code = TARGET_CODES[i];
+            options.add(UiOptionItem.from(dialogContext.getString(TARGET_LABELS[i]), option -> {
+                dialog.goBack();
+                if (!globalMenuCurrent(token)) return;
+                changeGlobal(before -> new CaptionPreferences.Global(
+                        code, before.mode, before.order, before.connectionId, before.batchSize));
+            }, checked == i));
         }
+        options.add(UiOptionItem.from(customLabel, option -> {
+            dialog.goBack();
+            if (!globalMenuCurrent(token)) return;
+            String initial = selectedIndex == TARGET_CODES.length && currentTarget != null ? currentTarget : "";
+            SimpleEditDialog.show(dialogContext, dialogContext.getString(R.string.caption_ai_target),
+                    dialogContext.getString(R.string.caption_ai_lang_custom_hint), initial, raw -> {
+                        if (!globalMenuCurrent(token)) return true;
+                        String value = raw == null ? "" : raw.trim();
+                        try { new CaptionPreferences.Global(value, mGlobal.mode, mGlobal.order, mGlobal.connectionId, mGlobal.batchSize); }
+                        catch (IllegalArgumentException ignored) { message(R.string.caption_ai_invalid_language); return false; }
+                        changeGlobal(before -> new CaptionPreferences.Global(
+                                value, before.mode, before.order, before.connectionId, before.batchSize));
+                        return true;
+                    });
+        }, checked == TARGET_CODES.length));
+        String title = dialogContext.getString(R.string.caption_ai_target);
+        dialog.appendRadioCategory(title, options);
+        dialog.showDialog(title);
     }
 
-    private void showBatchSizeDialog(Context dialogContext, Object token) {
-        CharSequence[] items = new CharSequence[BATCH_SIZES.length + 1];
+    private void showBatchSizeDialog(AppDialogPresenter dialog, Object token) {
+        Context dialogContext = dialog.getContext();
         int checked = -1;
         int currentBatch = mGlobal.batchSize;
         for (int i = 0; i < BATCH_SIZES.length; i++) {
-            int size = BATCH_SIZES[i];
-            items[i] = size == CaptionPreferences.Global.DEFAULT_BATCH_SIZE ?
-                    dialogContext.getString(R.string.caption_ai_batch_default, size) : String.valueOf(size);
-            if (size == currentBatch) checked = i;
+            if (BATCH_SIZES[i] == currentBatch) { checked = i; break; }
         }
         String customLabel = dialogContext.getString(R.string.caption_ai_batch_custom);
         if (checked < 0) {
             checked = BATCH_SIZES.length;
             customLabel = customLabel + " (" + currentBatch + ")";
         }
-        items[BATCH_SIZES.length] = customLabel;
         int selectedIndex = checked;
-        AlertDialog pickerDialog = new AlertDialog.Builder(dialogContext, R.style.AppDialog)
-                .setTitle(R.string.caption_ai_batch_size)
-                .setSingleChoiceItems(items, selectedIndex, (picker, which) -> {
-                    picker.dismiss();
-                    if (!globalMenuCurrent(token)) return;
-                    if (which >= 0 && which < BATCH_SIZES.length) {
-                        int size = BATCH_SIZES[which];
-                        changeGlobal(before -> new CaptionPreferences.Global(
-                                before.targetLanguage, before.mode, before.order, before.connectionId, size), ROW_BATCH);
-                    } else {
-                        String initial = selectedIndex == BATCH_SIZES.length ? String.valueOf(currentBatch) : "";
-                        SimpleEditDialog.show(dialogContext, getContext().getString(R.string.caption_ai_batch_size),
-                                getContext().getString(R.string.caption_ai_batch_custom_hint), initial, raw -> {
-                                    if (!globalMenuCurrent(token)) return true;
-                                    int parsed;
-                                    try {
-                                        parsed = Integer.parseInt(raw == null ? "" : raw.trim());
-                                        new CaptionPreferences.Global(mGlobal.targetLanguage, mGlobal.mode, mGlobal.order, mGlobal.connectionId, parsed);
-                                    } catch (RuntimeException ignored) {
-                                        message(R.string.caption_ai_invalid_batch_size);
-                                        return false;
-                                    }
-                                    changeGlobal(before -> new CaptionPreferences.Global(
-                                            before.targetLanguage, before.mode, before.order, before.connectionId, parsed), ROW_BATCH);
-                                    return true;
-                                });
-                    }
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .create();
-        try {
-            pickerDialog.show();
-        } catch (RuntimeException e) {
-            MessageHelpers.showMessage(dialogContext, e.getMessage());
+        List<OptionItem> options = new ArrayList<>(BATCH_SIZES.length + 1);
+        for (int i = 0; i < BATCH_SIZES.length; i++) {
+            int size = BATCH_SIZES[i];
+            String label = size == CaptionPreferences.Global.DEFAULT_BATCH_SIZE ?
+                    dialogContext.getString(R.string.caption_ai_batch_default, size) : String.valueOf(size);
+            options.add(UiOptionItem.from(label, option -> {
+                dialog.goBack();
+                if (!globalMenuCurrent(token)) return;
+                changeGlobal(before -> new CaptionPreferences.Global(
+                        before.targetLanguage, before.mode, before.order, before.connectionId, size), ROW_BATCH);
+            }, checked == i));
         }
+        options.add(UiOptionItem.from(customLabel, option -> {
+            dialog.goBack();
+            if (!globalMenuCurrent(token)) return;
+            String initial = selectedIndex == BATCH_SIZES.length ? String.valueOf(currentBatch) : "";
+            SimpleEditDialog.show(dialogContext, dialogContext.getString(R.string.caption_ai_batch_size),
+                    dialogContext.getString(R.string.caption_ai_batch_custom_hint), initial, raw -> {
+                        if (!globalMenuCurrent(token)) return true;
+                        int parsed;
+                        try {
+                            parsed = Integer.parseInt(raw == null ? "" : raw.trim());
+                            new CaptionPreferences.Global(mGlobal.targetLanguage, mGlobal.mode, mGlobal.order, mGlobal.connectionId, parsed);
+                        } catch (RuntimeException ignored) {
+                            message(R.string.caption_ai_invalid_batch_size);
+                            return false;
+                        }
+                        changeGlobal(before -> new CaptionPreferences.Global(
+                                before.targetLanguage, before.mode, before.order, before.connectionId, parsed), ROW_BATCH);
+                        return true;
+                    });
+        }, checked == BATCH_SIZES.length));
+        String title = dialogContext.getString(R.string.caption_ai_batch_size);
+        dialog.appendRadioCategory(title, options);
+        dialog.showDialog(title);
     }
 
     private String languageLabel(String code) {

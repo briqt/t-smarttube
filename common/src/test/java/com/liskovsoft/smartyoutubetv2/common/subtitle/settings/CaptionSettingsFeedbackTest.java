@@ -267,8 +267,9 @@ public class CaptionSettingsFeedbackTest {
     private static final class Menu extends AppDialogPresenter {
         final Context context;
         final List<OptionItem> buttons = new ArrayList<>();
+        final List<OptionItem> lastRadioItems = new ArrayList<>();
         final Map<OptionItem, String> titles = new IdentityHashMap<>();
-        int shows, changes;
+        int shows, changes, backs;
         Menu(Context context) { super(context); this.context = context; }
         @Override public Context getContext() { return context; }
         @Override public void appendSingleSwitch(OptionItem item) { }
@@ -276,8 +277,12 @@ public class CaptionSettingsFeedbackTest {
             buttons.add(item); titles.put(item, item.getTitle().toString());
             item.setOnTitleChanged(() -> { changes++; titles.put(item, item.getTitle().toString()); });
         }
-        @Override public void appendRadioCategory(CharSequence title, List<OptionItem> items) { }
+        @Override public void appendRadioCategory(CharSequence title, List<OptionItem> items) {
+            lastRadioItems.clear();
+            lastRadioItems.addAll(items);
+        }
         @Override public void showDialog(CharSequence title) { shows++; }
+        @Override public void goBack() { backs++; }
     }
     private static final class Controller extends CaptionSettingsController {
         final Context context;
@@ -345,28 +350,37 @@ public class CaptionSettingsFeedbackTest {
         String batchSizeTitle() { return menu.titles.get(button(R.string.caption_ai_batch_size)); }
         String connectionTitle() { return menu.titles.get(button(R.string.caption_ai_connection)); }
         void customBatchSize(String value) {
+            int showsBefore = menu.shows, backsBefore = menu.backs;
             button(R.string.caption_ai_batch_size).onSelect(true); drain();
-            AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
-            int customIndex = picker.getListView().getCount() - 1;
-            picker.getListView().performItemClick(picker.getListView().getAdapter().getView(customIndex, null, picker.getListView()), customIndex, customIndex);
+            assertEquals(showsBefore + 1, menu.shows);
+            int customIndex = menu.lastRadioItems.size() - 1;
+            menu.lastRadioItems.get(customIndex).onSelect(true);
             drain();
+            assertEquals(backsBefore + 1, menu.backs);
+            menu.shows = 0;
             AlertDialog dialog = (AlertDialog) ShadowDialog.getLatestDialog();
             fill(dialog, R.id.simple_edit_value, value); ok(dialog);
         }
         void drain() { org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle(); }
         void work() { worker.next(); drain(); }
         void presetTarget(int index) {
+            int showsBefore = menu.shows, backsBefore = menu.backs;
             button(R.string.caption_ai_target).onSelect(true); drain();
-            AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
-            picker.getListView().performItemClick(picker.getListView().getAdapter().getView(index, null, picker.getListView()), index, index);
+            assertEquals(showsBefore + 1, menu.shows);
+            menu.lastRadioItems.get(index).onSelect(true);
             drain();
+            assertEquals(backsBefore + 1, menu.backs);
+            menu.shows = 0;
         }
         void customTarget(String value) {
+            int showsBefore = menu.shows, backsBefore = menu.backs;
             button(R.string.caption_ai_target).onSelect(true); drain();
-            AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
-            int customIndex = picker.getListView().getCount() - 1;
-            picker.getListView().performItemClick(picker.getListView().getAdapter().getView(customIndex, null, picker.getListView()), customIndex, customIndex);
+            assertEquals(showsBefore + 1, menu.shows);
+            int customIndex = menu.lastRadioItems.size() - 1;
+            menu.lastRadioItems.get(customIndex).onSelect(true);
             drain();
+            assertEquals(backsBefore + 1, menu.backs);
+            menu.shows = 0;
             AlertDialog dialog = (AlertDialog) ShadowDialog.getLatestDialog();
             fill(dialog, R.id.simple_edit_value, value); ok(dialog);
         }

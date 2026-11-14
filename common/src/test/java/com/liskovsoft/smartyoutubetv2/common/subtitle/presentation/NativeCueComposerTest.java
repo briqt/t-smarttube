@@ -150,6 +150,28 @@ public class NativeCueComposerTest {
         assertEquals("译文", ((List<Cue>) field(view, "cues")).get(0).text.toString());
     }
 
+    @Test
+    public void captionSubtitleViewThemeAppliesProportionalBilingualLineSpacingWithoutAffectingSingleLine() throws Exception {
+        android.content.Context base = RuntimeEnvironment.getApplication();
+        SubtitleView defaultView = new SubtitleView(base);
+        defaultView.setCues(compose(Collections.singletonList(new Cue("source")), "source", "译文", NativeCueComposer.Mode.BILINGUAL));
+        List<?> defaultPainters = (List<?>) field(defaultView, "painters");
+        assertEquals(1, defaultPainters.size());
+        assertEquals(1.0f, (Float) field(defaultPainters.get(0), "spacingMult"), 0.0001f);
+
+        SubtitleView themedView = new SubtitleView(new android.view.ContextThemeWrapper(
+                base, com.liskovsoft.smartyoutubetv2.common.R.style.CaptionSubtitleViewTheme));
+        themedView.setUserDefaultStyle();
+        themedView.setUserDefaultTextSize();
+        themedView.setApplyEmbeddedStyles(false);
+        themedView.setCues(compose(Collections.singletonList(new Cue("source")), "source", "译文", NativeCueComposer.Mode.BILINGUAL));
+        List<?> themedPainters = (List<?>) field(themedView, "painters");
+        assertEquals(1, themedPainters.size());
+        assertEquals(1.2f, (Float) field(themedPainters.get(0), "spacingMult"), 0.0001f);
+        assertEquals(0.0f, (Float) field(themedPainters.get(0), "spacingAdd"), 0.0001f);
+        assertEquals(1, ((List<?>) field(themedView, "cues")).size());
+    }
+
     private static List<Cue> compose(List<Cue> cues, String original, String translation, NativeCueComposer.Mode mode) {
         return NativeCueComposer.compose(cues, original, translation, mode, NativeCueComposer.Order.ORIGINAL_FIRST, 100);
     }

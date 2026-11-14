@@ -1,6 +1,7 @@
 package com.liskovsoft.smartyoutubetv2.common.subtitle.presentation;
 
 import com.liskovsoft.smartyoutubetv2.common.subtitle.session.CaptionSession;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionLineNormalizer;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.TranslationCoordinator;
 
 import java.util.List;
@@ -46,14 +47,9 @@ public final class CaptionDisplayBundle {
         return new CaptionDisplayBundle(original.toString(), translated.toString(), frame.items.size());
     }
 
-    /** Display separators only: the Plan, request text and source references retain their real newlines. */
+    /** Display-boundary single-line join only: the Plan and raw timeline retain their real newlines. */
     private static void appendDisplayBlock(StringBuilder output, String text) {
-        int start = 0, end = text.length();
-        while (start < end && (text.charAt(start) == '\n' || text.charAt(start) == '\r')) start++;
-        while (end > start && (text.charAt(end - 1) == '\n' || text.charAt(end - 1) == '\r')) end--;
-        if (start == end) return;
-        if (output.length() > 0) output.append('\n');
-        output.append(text, start, end);
+        CaptionLineNormalizer.appendInline(output, text);
     }
 
     private static boolean blank(String text) {

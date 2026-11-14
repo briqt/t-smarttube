@@ -143,14 +143,14 @@ public class CaptionSettingsControllerTest {
             assertEquals(0, presenter.switches.size());
 
             OptionItem targetButton = presenter.buttons.get(0);
+            int showsBefore = presenter.dialogShows;
+            int backsBefore = presenter.backCalls;
             targetButton.onSelect(true);
-            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
-            AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
-            assertNotNull(picker);
-            assertTrue(picker.isShowing());
-            picker.getListView().performItemClick(picker.getListView().getAdapter().getView(0, null, picker.getListView()), 0, 0);
+            assertEquals(showsBefore + 1, presenter.dialogShows);
+            assertFalse(presenter.lastRadioItems.isEmpty());
+            presenter.lastRadioItems.get(0).onSelect(true);
             awaitControllerIo(h);
-            assertFalse(picker.isShowing());
+            assertEquals(backsBefore + 1, presenter.backCalls);
             assertTrue(targetButton.getTitle().toString().contains(home.get().getString(R.string.caption_ai_lang_zh_hans)));
 
             Object token = ReflectionHelpers.getField(h, "mMenuToken");
@@ -161,11 +161,10 @@ public class CaptionSettingsControllerTest {
             h.onViewDestroyed();
             h.onFinish();
             assertTrue((Boolean) ReflectionHelpers.callInstanceMethod(h, "globalMenuCurrent", ReflectionHelpers.ClassParameter.from(Object.class, token)));
+            int showsBeforeAfterFinish = presenter.dialogShows;
             targetButton.onSelect(true);
-            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
-            AlertDialog pickerAfterFinish = (AlertDialog) ShadowDialog.getLatestDialog();
-            assertNotNull(pickerAfterFinish);
-            pickerAfterFinish.getListView().performItemClick(pickerAfterFinish.getListView().getAdapter().getView(3, null, pickerAfterFinish.getListView()), 3, 3);
+            assertEquals(showsBeforeAfterFinish + 1, presenter.dialogShows);
+            presenter.lastRadioItems.get(3).onSelect(true);
             awaitControllerIo(h);
             assertTrue("Standalone row title must still update after background player teardown",
                     targetButton.getTitle().toString().contains(home.get().getString(R.string.caption_ai_lang_ja)));
@@ -214,15 +213,16 @@ public class CaptionSettingsControllerTest {
             h.whenReady(() -> h.appendGlobalSettings(presenter));
             awaitControllerIo(h);
             OptionItem targetButton = presenter.buttons.get(0);
+            int backsBefore = presenter.backCalls;
             targetButton.onSelect(true);
-            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
-            AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
-            int customIndex = picker.getListView().getCount() - 1;
-            picker.getListView().performItemClick(picker.getListView().getAdapter().getView(customIndex, null, picker.getListView()), customIndex, customIndex);
+            int customIndex = presenter.lastRadioItems.size() - 1;
+            presenter.lastRadioItems.get(customIndex).onSelect(true);
             org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
 
             AlertDialog customDialog = (AlertDialog) ShadowDialog.getLatestDialog();
-            assertNotSame(picker, customDialog);
+            assertEquals(backsBefore + 1, presenter.backCalls);
+            assertNotNull(customDialog);
+            assertTrue(customDialog.isShowing());
             EditText input = customDialog.findViewById(R.id.simple_edit_value);
             input.setText("  pt-BR  ");
             customDialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
@@ -231,10 +231,7 @@ public class CaptionSettingsControllerTest {
             assertTrue(targetButton.getTitle().toString().endsWith(": pt-BR"));
 
             targetButton.onSelect(true);
-            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
-            AlertDialog reopened = (AlertDialog) ShadowDialog.getLatestDialog();
-            assertEquals(customIndex, reopened.getListView().getCheckedItemPosition());
-            reopened.dismiss();
+            assertTrue(presenter.lastRadioItems.get(customIndex).isSelected());
         } finally {
             h.onFinish();
             menu.pause().stop().destroy();
@@ -308,10 +305,9 @@ public class CaptionSettingsControllerTest {
             String beforeTitle = batchButton.getTitle().toString();
             for (String invalid : new String[]{"0", "33", "abc"}) {
                 batchButton.onSelect(true);
+                int customIndex = presenter.lastRadioItems.size() - 1;
+                presenter.lastRadioItems.get(customIndex).onSelect(true);
                 org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
-                AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
-                int customIndex = picker.getListView().getCount() - 1;
-                picker.getListView().performItemClick(picker.getListView().getAdapter().getView(customIndex, null, picker.getListView()), customIndex, customIndex);
                 org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
 
                 AlertDialog customDialog = (AlertDialog) ShadowDialog.getLatestDialog();
@@ -325,10 +321,8 @@ public class CaptionSettingsControllerTest {
             }
 
             batchButton.onSelect(true);
-            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
-            AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
-            int customIndex = picker.getListView().getCount() - 1;
-            picker.getListView().performItemClick(picker.getListView().getAdapter().getView(customIndex, null, picker.getListView()), customIndex, customIndex);
+            int customIndex = presenter.lastRadioItems.size() - 1;
+            presenter.lastRadioItems.get(customIndex).onSelect(true);
             org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
 
             AlertDialog customDialog = (AlertDialog) ShadowDialog.getLatestDialog();
@@ -340,10 +334,7 @@ public class CaptionSettingsControllerTest {
             assertTrue(batchButton.getTitle().toString().contains("14"));
 
             batchButton.onSelect(true);
-            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
-            AlertDialog reopened = (AlertDialog) ShadowDialog.getLatestDialog();
-            assertEquals(customIndex, reopened.getListView().getCheckedItemPosition());
-            reopened.dismiss();
+            assertTrue(presenter.lastRadioItems.get(customIndex).isSelected());
         } finally {
             h.onFinish();
             menu.pause().stop().destroy();
@@ -486,8 +477,13 @@ public class CaptionSettingsControllerTest {
             h.onNewVideo(video("synthetic-a"));
             h.appendMenu(presenter);
             OptionItem option = presenter.buttons.stream().filter(item -> item.getTitle().toString().startsWith(menu.get().getString(title))).findFirst().get();
+            presenter.lastRadioItems.clear();
             option.onSelect(true);
             org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            if (!presenter.lastRadioItems.isEmpty()) {
+                presenter.lastRadioItems.get(presenter.lastRadioItems.size() - 1).onSelect(true);
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            }
             editor = (AlertDialog) ShadowDialog.getLatestDialog();
             assertNotNull(editor);
             assertTrue(editor.isShowing());
@@ -518,12 +514,19 @@ public class CaptionSettingsControllerTest {
         final List<OptionItem> switches = new ArrayList<>();
         final List<OptionItem> buttons = new ArrayList<>();
         final List<CharSequence> radioCategories = new ArrayList<>();
+        final List<OptionItem> lastRadioItems = new ArrayList<>();
+        int dialogShows, backCalls;
         MenuPresenter(Context context) { super(context); this.context = context; }
         @Override public Context getContext() { return context; }
         @Override public void appendSingleSwitch(OptionItem item) { switches.add(item); }
         @Override public void appendSingleButton(OptionItem item) { buttons.add(item); }
-        @Override public void appendRadioCategory(CharSequence title, List<OptionItem> items) { radioCategories.add(title); }
-        @Override public void showDialog(CharSequence title) { }
+        @Override public void appendRadioCategory(CharSequence title, List<OptionItem> items) {
+            radioCategories.add(title);
+            lastRadioItems.clear();
+            lastRadioItems.addAll(items);
+        }
+        @Override public void showDialog(CharSequence title) { dialogShows++; }
+        @Override public void goBack() { backCalls++; }
         void clearCaptured() { switches.clear(); buttons.clear(); radioCategories.clear(); }
     }
 

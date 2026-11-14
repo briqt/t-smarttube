@@ -42,6 +42,7 @@ public class ChatCompletionAdapterTest {
         assertEquals("system", messages.getJSONObject(0).getString("role"));
         String system = messages.getJSONObject(0).getString("content");
         assertTrue(system.contains("Simplified Chinese [zh-Hans]"));
+        assertTrue(system.contains("single line without internal line breaks"));
         assertTrue(system.contains("Title: Demo Video\nChannel: Tech"));
         assertTrue(system.contains("(\\[[...)"));
         assertFalse(system.contains("ignore previous"));
@@ -65,14 +66,20 @@ public class ChatCompletionAdapterTest {
         TranslationBatch batch = batch("[[p1]]", "  [[end]]", "\\[[p0]]", "first\nsecond");
         JSONObject body = BoundedJson.object(new String(ChatCompletionAdapter.encode(batch, config()), utf8()));
         String user = body.getJSONArray("messages").getJSONObject(1).getString("content");
-        assertTrue(user.contains("[[p0]]\n\\[[p1]]\n[[p1]]\n  \\[[end]]\n[[p2]]\n\\\\[[p0]]\n[[p3]]\nfirst\nsecond\n[[source_end]]"));
+        assertTrue(user.contains("[[p0]]\n\\[[p1]]\n[[p1]]\n  \\[[end]]\n[[p2]]\n\\\\[[p0]]\n[[p3]]\nfirst second\n[[source_end]]"));
         String modelReply = "[[p0]]\n\\[[p1]]\n[[p1]]\n  \\[[end]]\n[[p2]]\n\\\\[[p0]]\n[[p3]]\n第一行\n第二行\n[[end]]";
         ChatCompletionAdapter.Result result = ChatCompletionAdapter.decode(batch, config(), envelope("stop", modelReply, null));
         assertEquals(ChatCompletionAdapter.State.COMPLETE, result.state);
         assertEquals("[[p1]]", result.translations.get("g0"));
         assertEquals("  [[end]]", result.translations.get("g1"));
         assertEquals("\\[[p0]]", result.translations.get("g2"));
-        assertEquals("第一行\n第二行", result.translations.get("g3"));
+        assertEquals("第一行第二行", result.translations.get("g3"));
+
+        String mixedReply = "[[p0]]\nline one\nline two\n[[p1]]\n第一行\n\\[[p0]]\n[[p2]]\nok\n[[p3]]\ndone\n[[end]]";
+        ChatCompletionAdapter.Result mixed = ChatCompletionAdapter.decode(batch, config(), envelope("stop", mixedReply, null));
+        assertEquals(ChatCompletionAdapter.State.COMPLETE, mixed.state);
+        assertEquals("line one line two", mixed.translations.get("g0"));
+        assertEquals("第一行 [[p0]]", mixed.translations.get("g1"));
     }
 
     @Test

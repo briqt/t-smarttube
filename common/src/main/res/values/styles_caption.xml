@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="CaptionSubtitleViewTheme">
+        <item name="android:lineSpacingMultiplier">1.2</item>
+    </style>
+</resources>

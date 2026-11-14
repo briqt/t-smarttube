@@ -283,6 +283,34 @@ public class CaptionConnectionDialogTest {
         } finally { h.close(); }
     }
 
+    @Test public void connectionDialogAppliesDarkThemeTextHintAndDropdownColors() {
+        Harness h = new Harness(false);
+        try {
+            int expectedText = androidx.core.content.ContextCompat.getColor(h.activity, R.color.dialog_text_color);
+            int expectedHint = androidx.core.content.ContextCompat.getColor(h.activity, R.color.white_20);
+            for (int fieldId : new int[]{R.id.caption_ai_endpoint, R.id.caption_ai_model, R.id.caption_ai_key,
+                    R.id.caption_ai_output_tokens, R.id.caption_ai_workspace}) {
+                EditText input = h.field(fieldId);
+                assertEquals(expectedText, input.getCurrentTextColor());
+                assertEquals(expectedHint, input.getCurrentHintTextColor());
+                assertNotNull(androidx.core.view.ViewCompat.getBackgroundTintList(input));
+                assertEquals(expectedText, androidx.core.view.ViewCompat.getBackgroundTintList(input).getDefaultColor());
+            }
+            for (int spinnerId : new int[]{R.id.caption_ai_service, R.id.caption_ai_thinking}) {
+                Spinner spinner = h.spinner(spinnerId);
+                android.view.View selected = spinner.getAdapter().getView(0, null, spinner);
+                assertEquals(expectedText, ((android.widget.TextView) selected).getCurrentTextColor());
+                android.view.View dropdown = spinner.getAdapter().getDropDownView(0, null, spinner);
+                assertEquals(expectedText, ((android.widget.TextView) dropdown).getCurrentTextColor());
+                assertNotNull(dropdown.getBackground());
+                assertNotNull(spinner.getPopupBackground());
+            }
+            android.widget.Button advancedToggle = h.dialog.findViewById(R.id.caption_ai_advanced_toggle);
+            assertEquals(expectedText, advancedToggle.getCurrentTextColor());
+            assertNotNull(advancedToggle.getBackground());
+        } finally { h.close(); }
+    }
+
     private static final class Harness {
         final ActivityController<Activity> owner;
         final Activity activity;

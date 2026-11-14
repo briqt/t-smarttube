@@ -183,6 +183,7 @@ public final class ChatCompletionAdapter {
                 .append("Rules:\n")
                 .append("- If a sentence or clause is split across adjacent [[pN]] cues, use the batch context and surrounding cues to translate each segment coherently so split cues read smoothly together in sequence.\n")
                 .append("- Keep a strict 1-to-1 correspondence with the [[pN]] markers: do not merge IDs, split IDs, shift an entire sentence onto an adjacent ID, leave an item empty, or invent commentary.\n")
+                .append("- Keep each item's translated subtitle on a single line without internal line breaks.\n")
                 .append("- Escape rule: if any subtitle text line would literally begin with [[, prefix it with a single backslash (\\[[...).\n")
                 .append("- Output format ONLY: return each item starting with its exact [[pN]] marker on its own line, followed immediately by its translated subtitle text, and finish the entire response with ")
                 .append(MARKER_END).append(" on its own line. No markdown code fences, preambles, or explanations.");
@@ -210,7 +211,7 @@ public final class ChatCompletionAdapter {
         List<TranslationBatch.Item> items = batch.getItems();
         for (int i = 0; i < items.size(); i++) {
             sb.append("[[p").append(i).append("]]\n")
-                    .append(escapeMarkerLines(items.get(i).source)).append('\n');
+                    .append(escapeMarkerLines(CaptionLineNormalizer.normalize(items.get(i).source))).append('\n');
         }
         sb.append(MARKER_SOURCE_END);
         return sb.toString();
@@ -260,8 +261,7 @@ public final class ChatCompletionAdapter {
     }
 
     private static String singleLineReference(String text) {
-        String normalized = normalizeLineEndings(text).replace('\n', ' ').trim();
-        return normalized.replaceAll("[ \\t]+", " ");
+        return CaptionLineNormalizer.normalize(text).trim().replaceAll("[ \\t]+", " ");
     }
 
     private static String normalizeLineEndings(String text) {
@@ -332,17 +332,7 @@ public final class ChatCompletionAdapter {
     }
 
     private static String joinTrimmedLines(List<String> lines) {
-        int start = 0;
-        int end = lines.size() - 1;
-        while (start <= end && lines.get(start).trim().isEmpty()) start++;
-        while (end >= start && lines.get(end).trim().isEmpty()) end--;
-        if (start > end) return "";
-        StringBuilder out = new StringBuilder();
-        for (int i = start; i <= end; i++) {
-            if (i > start) out.append('\n');
-            out.append(lines.get(i));
-        }
-        return out.toString();
+        return CaptionLineNormalizer.joinLines(lines);
     }
 
     private static Result empty(TranslationBatch batch, State state) {

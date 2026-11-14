@@ -188,12 +188,14 @@ public class CaptionOutputBridgeTest {
             while ((count = input.read(buffer)) != -1) bytes.write(buffer, 0, count);
             fixture = new String(bytes.toByteArray(), Charset.forName("UTF-8"));
         }
+        String aWire = "[token1]";
+        String bWire = "token2 token3 token4 token5 token6 token7 token8";
         List<String> sent = new ArrayList<>();
         Harness h = new Harness(false, fixture, (target, source) -> {
             assertEquals("zh-Hans", target);
-            assertTrue("A complete source unit must match the prewritten gold table", a.equals(source) || b.equals(source) || c.equals(source));
+            assertTrue("A complete source unit must match the prewritten gold table", aWire.equals(source) || bWire.equals(source) || c.equals(source));
             sent.add(source);
-            return a.equals(source) ? "提示一" : b.equals(source) ? "第二至八项" : "第九至十四项";
+            return aWire.equals(source) ? "提示一" : bWire.equals(source) ? "第二至八项" : "第九至十四项";
         }, true);
         h.view = new SubtitleView(RuntimeEnvironment.getApplication());
         SubtitleManager manager = new SubtitleManager(h.view);
@@ -229,8 +231,8 @@ public class CaptionOutputBridgeTest {
                 boolean[] events = {true, false, true, true, false, true, true, false, true};
                 String lineB = "token2 token3 token4 token5 token6 token7 token8";
                 String lineC = "token9 token10 token11 token12 token13 token14";
-                String[] visible = {"[token1]\n提示一", "[token1]\n提示一", "[token1]\n" + lineB + "\n提示一\n第二至八项",
-                        lineB + "\n第二至八项", lineB + "\n第二至八项", lineB + "\n" + lineC + "\n第二至八项\n第九至十四项",
+                String[] visible = {"[token1]\n提示一", "[token1]\n提示一", "[token1] " + lineB + "\n提示一第二至八项",
+                        lineB + "\n第二至八项", lineB + "\n第二至八项", lineB + " " + lineC + "\n第二至八项第九至十四项",
                         lineC + "\n第九至十四项", lineC + "\n第九至十四项", ""};
                 for (int i = 0; i < positions.length; i++) {
                     h.positionMs = positions[i];
@@ -239,7 +241,7 @@ public class CaptionOutputBridgeTest {
                     if (visible[i].isEmpty()) assertTrue(h.last.isEmpty());
                     else assertOneVisibleCue(h, visible[i]);
                 }
-                assertEquals(Arrays.asList(a, b, c), sent);
+                assertEquals(Arrays.asList(aWire, bWire, c), sent);
                 assertEquals("Display holds and frame refreshes must not repay the three canonical source units", 1, h.calls.get());
             } finally { output.release(); }
         } finally { manager.release(); h.close(); }
@@ -268,18 +270,18 @@ public class CaptionOutputBridgeTest {
                 assertEquals(2, h.coordinator.prepareFrame().items.size());
                 assertEquals("red ", h.coordinator.prepareFrame().items.get(0).original);
                 assertEquals("blue", h.coordinator.prepareFrame().items.get(1).original);
-                assertOneVisibleCue(h, "red \nblue\n红\n蓝");
+                assertOneVisibleCue(h, "red blue\n红蓝");
                 h.bridge.setDisplay(NativeCueComposer.Mode.BILINGUAL, NativeCueComposer.Order.TRANSLATION_FIRST);
-                assertOneVisibleCue(h, "红\n蓝\nred \nblue");
+                assertOneVisibleCue(h, "红蓝\nred blue");
                 h.bridge.setDisplay(NativeCueComposer.Mode.TRANSLATION, NativeCueComposer.Order.TRANSLATION_FIRST);
-                assertOneVisibleCue(h, "红\n蓝");
+                assertOneVisibleCue(h, "红蓝");
                 h.bridge.setDisplay(NativeCueComposer.Mode.ORIGINAL, NativeCueComposer.Order.ORIGINAL_FIRST);
                 assertOneVisibleCue(h, "red blue");
                 h.bridge.setDisplay(NativeCueComposer.Mode.BILINGUAL, NativeCueComposer.Order.ORIGINAL_FIRST);
                 h.bridge.setEnabled(false);
                 assertOneVisibleCue(h, "red blue");
                 h.bridge.setEnabled(true);
-                assertOneVisibleCue(h, "red \nblue\n红\n蓝");
+                assertOneVisibleCue(h, "red blue\n红蓝");
                 assertEquals(1, h.calls.get());
                 h.positionMs = 5000;
                 emitNative(h, output.getCues(5_000_000));
@@ -893,6 +895,29 @@ public class CaptionOutputBridgeTest {
         public int calls() { return h.calls.get(); }
         public List<Cue> current() { return h.last; }
         public void close() { h.close(); }
+    }
+
+    @Test
+    public void twoLineVttCueCollapsesToSingleOriginalAndSingleTranslatedLine() throws Exception {
+        String vtt = "WEBVTT\n\n00:01.000 --> 00:04.000\nJust a few\nshort words\n\n";
+        Harness h = new Harness(false, vtt, (target, source) -> {
+            assertEquals("Just a few short words", source);
+            return "只有几个\n短词";
+        }, true);
+        h.view = new SubtitleView(RuntimeEnvironment.getApplication());
+        SubtitleManager manager = new SubtitleManager(h.view);
+        ReflectionHelpers.setField(manager, "mCaptionBridge", h.bridge);
+        try {
+            h.enable();
+            SubtitleOutputBuffer output = nativeOutput(h);
+            try {
+                h.positionMs = 1000;
+                new CaptionCueDispatcher(h.observation, manager, null).onCues(output.getCues(1_000_000));
+                h.worker.drain();
+                h.ui.pulse();
+                assertOneVisibleCue(h, "Just a few short words\n只有几个短词");
+            } finally { output.release(); }
+        } finally { manager.release(); h.close(); }
     }
 
     private enum OriginalDifference { NONE, TEXT, CLOCK, LANGUAGE, PROJECTION, SETTINGS, HEADER_CONFLICT, WEAK }

@@ -45,7 +45,7 @@ public class CaptionBoundaryRefinerTest {
             h.engine.tick(1_000_000, false); h.queue.drain();
             assertEquals(1, h.boundaries);
             assertEquals(1, h.translations);
-            assertEquals(Arrays.asList("old\n", "new line\n", "last line"), h.sent);
+            assertEquals(Arrays.asList("old", "new line", "last line"), h.sent);
             assertEquals(2, h.engine.prepareFrame().items.size());
             assertEquals("旧行", h.engine.prepareFrame().items.get(0).translation);
             assertEquals("新行", h.engine.prepareFrame().items.get(1).translation);
@@ -65,7 +65,7 @@ public class CaptionBoundaryRefinerTest {
             assertSame(original, h.session.getSnapshot());
             assertEquals(1, h.boundaries);
             assertEquals(1, h.translations);
-            assertEquals(Arrays.asList(CANONICAL), h.sent);
+            assertEquals(Arrays.asList(CaptionLineNormalizer.normalize(CANONICAL)), h.sent);
             assertEquals("整句", h.engine.prepareFrame().items.get(0).translation);
             for (int i = 0; i < 10; i++) { h.engine.tick(1_500_000, i % 2 == 0); h.queue.drain(); }
             assertEquals(1, h.boundaries);
@@ -109,7 +109,9 @@ public class CaptionBoundaryRefinerTest {
             assertSame(original, h.session.getSnapshot());
             assertEquals(1, h.boundaries);
             assertEquals(1, h.translations);
-            assertEquals(texts(original), h.sent);
+            List<String> expectedSent = new ArrayList<>();
+            for (String text : texts(original)) expectedSent.add(CaptionLineNormalizer.normalize(text));
+            assertEquals(expectedSent, h.sent);
             h.engine.tick(1_000_000, false); h.queue.drain();
             assertEquals(1, h.boundaries);
             assertNotNull(h.engine.prepareFrame().items.get(0).translation);
@@ -190,11 +192,14 @@ public class CaptionBoundaryRefinerTest {
                         translations++;
                         StringBuilder out = new StringBuilder();
                         List<String> sources = parseMarkerItems(userContent);
+                        List<String> expectedLongSources = new ArrayList<>(deterministicSources.size());
+                        for (String item : deterministicSources) expectedLongSources.add(CaptionLineNormalizer.normalize(item));
+                        String normalizedCanonical = CaptionLineNormalizer.normalize(CANONICAL);
                         for (int i = 0; i < sources.size(); i++) {
                             String text = sources.get(i); sent.add(text);
-                            assertTrue("Strict source dictionary", longUnit ? deterministicSources.contains(text) :
-                                    "old\n".equals(text) || "new line\n".equals(text) || "last line".equals(text) || CANONICAL.equals(text));
-                            String translated = "old\n".equals(text) ? "旧行" : "new line\n".equals(text) ? "新行" :
+                            assertTrue("Strict source dictionary", longUnit ? expectedLongSources.contains(text) :
+                                    "old".equals(text) || "new line".equals(text) || "last line".equals(text) || normalizedCanonical.equals(text));
+                            String translated = "old".equals(text) ? "旧行" : "new line".equals(text) ? "新行" :
                                     "last line".equals(text) ? "末行" : "整句";
                             out.append("[[p").append(i).append("]]\n").append(translated).append('\n');
                         }
