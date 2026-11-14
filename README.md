@@ -7,20 +7,20 @@ the upstream download links in the preserved documentation below install the ori
 
 ## Subtitle enhancement
 
-- Enable AI subtitles for a channel from the existing player subtitle menu.
-- Configure the global target language, original/translation order, or translation-only display in **AI subtitle details**.
-- Configure a model provider, endpoint, model ID and API key through the native connection editor.
+- Enable bilingual subtitles per channel directly in the player subtitle menu, or configure global defaults under **Settings -> Subtitles**.
+- Choose the global target language from common presets (or enter a custom language code) and select original-top, translation-top, or translation-only display.
+- Configure an OpenAI-compatible or native model connection with **API URL**, **Model ID**, and **API Key**; advanced options stay collapsed by default.
 - Existing subtitle selection, NONE, styling, size and position controls remain available. Turning AI off restores the native subtitle path.
 - Translation uses available text captions; it does not upload audio or create captions for videos without them. Unsupported or incomplete enhancement results fall back to native captions.
-- 对 WebVTT 自动字幕的重复或不可信词级时间标记保守兼容：保留原始文字与 cue 时段，仅受影响的 cue 放弃精细词时钟，不因单条异常丢弃整轨增强输入。
+- Conservatively tolerates duplicate or out-of-bounds word timestamps in auto-generated WebVTT captions: preserves the original text and cue timing while dropping fine-grained word clocks only for affected cues instead of rejecting the entire track.
 
 API keys are not included in APKs and are write-only in the connection editor. Provider charges and model compatibility are the user's responsibility.
 
 ## Model connections
 
-- Choose an explicit service/protocol: **OpenAI Chat Completions**, **OpenAI Responses**, **DeepSeek**, **Claude Messages**, **Gemini GenerateContent**, or **custom Chat Completions**. A different URL does not automatically change the protocol.
-- Enter your own model ID and HTTPS endpoint. Platform suggestions do not select a model or verify account access. Gemini accepts a `/models` base URL, or a full `:generateContent` URL matching the configured model. Claude supports an optional workspace ID.
-- New connections default to **automatic low thinking** and an `8192` max output token limit. The rule set requests thinking off where documented, otherwise a supported low effort or minimum budget. Unknown model IDs and custom Chat connections receive no automatic thinking-control parameter. You can choose provider defaults; the explicit manual DeepSeek control is retained for compatible Chat models.
+- Default to **OpenAI-compatible (Generic)** (`Chat Completions`) or pick a quick preset (**DeepSeek**, **OpenAI**, **Claude Native**, **Gemini Native**, **OpenAI Responses**) to pre-fill the official endpoint. A different URL does not silently change the selected wire protocol.
+- Enter your own model ID and API URL. In OpenAI-compatible Chat modes, omitted `https://`, bare hostnames, and version roots such as `/v1` automatically complete to `/v1/chat/completions` (or `/chat/completions`), while explicit custom paths remain unchanged; insecure `http://` URLs are rejected. Gemini accepts a `/models` base URL or a full `:generateContent` URL matching the configured model.
+- **Advanced options** (collapsed by default) control **Reasoning / thinking** (`Auto`, `Omit parameter`, or `Force off` sending `thinking: {type: "disabled"}`), **Max output tokens** (default `8192`), and Claude's optional workspace ID.
 - Automatic rules match conservative, exact model IDs, not every model name or snapshot. See [the current rule set](common/src/main/java/com/liskovsoft/smartyoutubetv2/common/subtitle/translation/CaptionModelPolicy.java). A requested control or omitted reasoning text is not proof of zero internal reasoning or zero reasoning charges.
 - Existing connections keep their protocol, thinking choice and stored Key. Changing the endpoint, service or workspace requires replacing or explicitly clearing the Key; it is never silently forwarded to a new target.
 

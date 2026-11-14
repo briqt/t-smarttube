@@ -3,13 +3,14 @@ package com.liskovsoft.smartyoutubetv2.common.subtitle.settings;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
+import androidx.appcompat.app.AlertDialog;
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemMetadata;
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.BasePlayerController;
-import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
+import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.FormatItem;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs;
@@ -33,19 +34,38 @@ import java.util.concurrent.TimeUnit;
 /** Native lifecycle/menu adapter; all persistence and Keystore operations stay on one bounded worker. */
 public class CaptionSettingsController extends BasePlayerController implements AppPrefs.ProfileChangeListener {
     private interface GlobalChange { CaptionPreferences.Global apply(CaptionPreferences.Global before); }
+    private static final String[] TARGET_CODES = {
+            "zh-Hans", "zh-Hant", "en", "ja", "ko", "es", "fr", "de", "ru"
+    };
+    private static final int[] TARGET_LABELS = {
+            R.string.caption_ai_lang_zh_hans, R.string.caption_ai_lang_zh_hant,
+            R.string.caption_ai_lang_en, R.string.caption_ai_lang_ja,
+            R.string.caption_ai_lang_ko, R.string.caption_ai_lang_es,
+            R.string.caption_ai_lang_fr, R.string.caption_ai_lang_de,
+            R.string.caption_ai_lang_ru
+    };
+
     private static final class MenuToken {
         final Owner owner;
         final Object source;
         final long viewGeneration;
-        MenuToken(Owner owner, Object source, long viewGeneration) { this.owner = owner; this.source = source; this.viewGeneration = viewGeneration; }
+        final boolean requirePlayer;
+        MenuToken(Owner owner, Object source, long viewGeneration, boolean requirePlayer) {
+            this.owner = owner;
+            this.source = source;
+            this.viewGeneration = viewGeneration;
+            this.requirePlayer = requirePlayer;
+        }
     }
     private static final class Owner {
         volatile boolean active = true;
         CaptionPreferenceStore preferences;
         CaptionConnectionStore connection;
     }
+
     private final Handler mUi = new Handler(Looper.getMainLooper());
     private final CaptionSelectionMemory mSelection = new CaptionSelectionMemory();
+    private final List<Runnable> mPendingReady = new ArrayList<>();
     private ThreadPoolExecutor mIo;
     private AppPrefs mAppPrefs;
     private Owner mOwner;
@@ -56,19 +76,15 @@ public class CaptionSettingsController extends BasePlayerController implements A
     private boolean mViewActive;
     private long mViewGeneration;
     private boolean mGlobalUnsaved;
-    private boolean mChannelUnsaved;
     private long mGlobalRevision;
     private int mConnectionSaves;
     private int mGlobalSaves;
     private boolean mConnectionUnsaved;
-    private boolean mRetrying;
-    private boolean mSavedFeedback;
     private boolean mLifecycleTraceEnabled;
     private int mLifecycleEvents;
-    private Object mDetailsToken;
-    private UiOptionItem mDetailsState;
-    private UiOptionItem mDetailsTarget;
-    private UiOptionItem mDetailsConnection;
+    private Object mMenuToken;
+    private UiOptionItem mMenuTarget;
+    private UiOptionItem mMenuConnection;
     private CaptionPreferenceStore.Snapshot mPreferences;
     private CaptionConnectionStore.Snapshot mConnection;
     private CaptionPreferences.Global mGlobal = CaptionPreferences.Global.defaults();
@@ -77,9 +93,21 @@ public class CaptionSettingsController extends BasePlayerController implements A
         mLifecycleTraceEnabled = (getContext().getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
         trace("init", null);
         if (mAppPrefs == null) { mAppPrefs = AppPrefs.instance(getContext()); mAppPrefs.addListener(this); }
-        if (mIo == null || mIo.isShutdown()) mIo = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
-                new ArrayBlockingQueue<>(32), task -> new Thread(task, "caption-settings"), new ThreadPoolExecutor.AbortPolicy());
-        onProfileChanged();
+        if (mIo == null || mIo.isShutdown()) {
+            ThreadPoolExecutor io = new ThreadPoolExecutor(1, 1, 1L, TimeUnit.SECONDS,
+                    new ArrayBlockingQueue<>(32), task -> {
+                        Thread thread = new Thread(task, "caption-settings");
+                        thread.setDaemon(true);
+                        return thread;
+                    }, new ThreadPoolExecutor.AbortPolicy());
+            io.allowCoreThreadTimeOut(true);
+            mIo = io;
+        }
+        if (mOwner == null || !mOwner.active) onProfileChanged();
+    }
+    private void ensureInitialized() {
+        if (mOwner != null && mOwner.active && mAppPrefs != null && mIo != null && !mIo.isShutdown()) return;
+        onInit();
     }
     @Override public void onProfileChanged() {
         if (Looper.myLooper() != Looper.getMainLooper()) { mUi.post(this::onProfileChanged); return; }
@@ -94,15 +122,14 @@ public class CaptionSettingsController extends BasePlayerController implements A
         mGlobal = CaptionPreferences.Global.defaults();
         mGlobalRevision++;
         mConnectionSaves = mGlobalSaves = 0;
-        mRetrying = mSavedFeedback = false;
-        mGlobalUnsaved = mChannelUnsaved = mConnectionUnsaved = false;
-        clearDetails();
+        mGlobalUnsaved = mConnectionUnsaved = false;
+        clearMenuRows();
         mChannelWrite = null;
         if (mSource != null) mSelection.begin(mSource, channel(mVideo), defaults());
         applyBridge(); // Stop old credentials before asynchronous profile reads, even in the shared bucket.
         String scope = mAppPrefs.getProfileScope();
         Context app = getContext().getApplicationContext();
-        execute(() -> {
+        if (!execute(() -> {
             if (previous != null) {
                 if (previous.preferences != null) previous.preferences.close();
                 if (previous.connection != null) previous.connection.close();
@@ -118,22 +145,25 @@ public class CaptionSettingsController extends BasePlayerController implements A
                 mConnection = connection;
                 mGlobal = preferences.preferences.global;
                 trace("profile_loaded", null);
+                drainReadyCallbacks();
                 bindChannel();
                 restoreAfterLoad();
+                updateMenuRows();
                 applyBridge();
             });
-        });
+        })) {
+            drainReadyCallbacks();
+        }
     }
     @Override public void onNewVideo(Video item) {
         mVideo = item;
         mSource = new Object();
         mSourceReady = false;
         mChannelWrite = null;
-        mChannelUnsaved = false;
         mSelection.begin(mSource, channel(item), preferences());
         trace("new_video", null);
         applyBridge();
-        updateDetails();
+        updateMenuRows();
     }
     @Override public void onSourceChanged(Video item) {
         if (mSource == null || item != mVideo) onNewVideo(item);
@@ -149,22 +179,30 @@ public class CaptionSettingsController extends BasePlayerController implements A
     @Override public void onEngineInitialized() { trace("engine_initialized", null); applyBridge(); }
     @Override public void onViewCreated() { mViewActive = true; trace("view_created", null); }
     @Override public void onViewResumed() { mViewActive = true; trace("view_resumed", null); restoreAfterLoad(); applyBridge(); }
-    @Override public void onEngineReleased() { mViewGeneration++; trace("engine_released", null); clearDetails(); stopBridge(); mSourceReady = false; }
-    @Override public void onViewDestroyed() { mViewGeneration++; mViewActive = false; trace("view_destroyed", null); clearDetails(); stopBridge(); }
+    @Override public void onEngineReleased() { mViewGeneration++; trace("engine_released", null); updateMenuRows(); stopBridge(); mSourceReady = false; }
+    @Override public void onViewDestroyed() { mViewGeneration++; mViewActive = false; trace("view_destroyed", null); updateMenuRows(); stopBridge(); }
     @Override public void onFinish() {
-        clearDetails();
         mViewGeneration++;
         mViewActive = false;
+        mSourceReady = false;
         stopBridge();
-        if (mOwner != null) mOwner.active = false;
-        if (mAppPrefs != null) mAppPrefs.removeListener(this);
-        mAppPrefs = null;
-        if (mIo != null) mIo.shutdown();
         mSelection.clear();
         mSource = null;
         mVideo = null;
-        mPreferences = null;
-        mConnection = null;
+        mChannelWrite = null;
+        updateMenuRows();
+        if (!standaloneMenuActive()) {
+            if (mOwner != null) mOwner.active = false;
+            mPendingReady.clear();
+            if (mAppPrefs != null) mAppPrefs.removeListener(this);
+            mAppPrefs = null;
+            mPreferences = null;
+            mConnection = null;
+        }
+    }
+
+    public void onStandaloneClosed() {
+        if (standaloneMenuActive()) clearMenuRows();
     }
 
     public boolean metadataCurrent(Video video, MediaItemMetadata metadata) {
@@ -175,7 +213,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
         if (video == mVideo && metadata != null && same(video.videoId, metadata.getVideoId())) { bindChannel(); applyBridge(); }
     }
     public Object menuToken() {
-        MenuToken menu = mOwner == null ? null : new MenuToken(mOwner, mSource, mViewGeneration);
+        MenuToken menu = mOwner == null ? null : new MenuToken(mOwner, mSource, mViewGeneration, true);
         trace("menu_captured", menu);
         return menu;
     }
@@ -220,7 +258,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
         if (mSource == null || channel == null || mPreferences == null) return;
         if (mSelection.channel() == null) mSelection.bind(mSource, channel, mPreferences.preferences);
         persistChannel();
-        updateDetails();
+        updateMenuRows();
     }
     private void restoreAfterLoad() {
         if (!mViewActive || getPlayer() == null || !mSourceReady) return;
@@ -260,75 +298,92 @@ public class CaptionSettingsController extends BasePlayerController implements A
         if (owner == null || mPreferences == null || mChannelWrite != null || change == null) return;
         Object write = new Object(), source = mSource;
         mChannelWrite = write;
-        mSavedFeedback = false;
-        updateDetails();
+        updateMenuRows();
         if (!execute(() -> {
             if (!owner.active) return;
-            CaptionPreferenceStore.Snapshot current = owner.preferences.load();
-            CaptionPreferenceStore.Snapshot saved = owner.preferences.updateChannel(current, change.channelId, change.preference);
+            CaptionPreferenceStore.Snapshot current = owner.preferences.recoverFailedWrite();
+            CaptionPreferenceStore.Snapshot saved = current != null && current.valid ?
+                    owner.preferences.updateChannel(current, change.channelId, change.preference) : null;
             mUi.post(() -> {
                 if (owner != mOwner || !owner.active) return;
                 if (saved != null) mPreferences = saved;
                 if (mChannelWrite != write) return;
                 mChannelWrite = null;
                 if (source != mSource) return;
-                if (saved != null) { mSelection.saved(change); mChannelUnsaved = false; mSavedFeedback = true; persistChannel(); }
-                else { mChannelUnsaved = true; message(R.string.caption_ai_save_failed); }
-                updateDetails();
+                if (saved != null) { mSelection.saved(change); persistChannel(); }
+                else { message(R.string.caption_ai_save_failed); }
+                updateMenuRows();
             });
-        })) { mChannelWrite = null; mChannelUnsaved = true; updateDetails(); }
+        })) { mChannelWrite = null; updateMenuRows(); }
     }
-    private void changeGlobal(GlobalChange change) {
+    private void changeGlobal(GlobalChange change) { changeGlobal(change, true); }
+    private void changeGlobal(GlobalChange change, boolean targetRow) {
         Owner owner = mOwner;
         if (owner == null || mPreferences == null) { message(R.string.caption_ai_loading); return; }
-        mGlobal = change.apply(mGlobal);
+        CaptionPreferences.Global desired = change.apply(mGlobal);
+        mGlobal = desired;
         long revision = ++mGlobalRevision;
-        mGlobalSaves++;
-        mSavedFeedback = false;
+        if (targetRow) mGlobalSaves++;
         applyBridge();
-        updateDetails();
+        updateMenuRows();
         if (!execute(() -> {
             if (!owner.active) return;
-            CaptionPreferenceStore.Snapshot current = owner.preferences.load();
-            CaptionPreferenceStore.Snapshot saved = owner.preferences.updateGlobal(current, change.apply(current.preferences.global));
+            CaptionPreferenceStore.Snapshot current = owner.preferences.recoverFailedWrite();
+            CaptionPreferenceStore.Snapshot saved = current != null && current.valid ?
+                    owner.preferences.updateGlobal(current, new CaptionPreferences.Global(
+                            desired.targetLanguage, desired.mode, desired.order, current.preferences.global.connectionId)) : null;
             mUi.post(() -> {
                 if (owner != mOwner || !owner.active) return;
-                mGlobalSaves--;
+                if (targetRow) mGlobalSaves--;
                 if (saved != null) mPreferences = saved;
                 if (revision == mGlobalRevision) {
-                    mGlobalUnsaved = saved == null;
-                    if (saved != null) { mGlobal = saved.preferences.global; mSavedFeedback = true; }
+                    if (targetRow) mGlobalUnsaved = saved == null;
+                    else if (saved != null) mGlobalUnsaved = false;
+                    if (saved != null) mGlobal = saved.preferences.global;
                     applyBridge();
                 }
-                updateDetails();
+                updateMenuRows();
                 if (saved == null) message(R.string.caption_ai_save_failed);
             });
-        })) { mGlobalSaves--; mGlobalUnsaved = true; updateDetails(); }
-    }
-    private void retry() {
-        Owner owner = mOwner;
-        if (owner == null || mPreferences == null || mRetrying) return;
-        mRetrying = true;
-        updateDetails();
-        if (!execute(() -> {
-            if (!owner.active) return;
-            CaptionPreferenceStore.Snapshot recovered = owner.preferences.recoverFailedWrite();
-            owner.connection.recoverFailedWrite();
-            mUi.post(() -> {
-                if (owner != mOwner || !owner.active) return;
-                mRetrying = false;
-                if (recovered == null || !recovered.valid) { updateDetails(); message(R.string.caption_ai_save_failed); return; }
-                mPreferences = recovered;
-                if (mGlobalUnsaved) { CaptionPreferences.Global wanted = mGlobal; changeGlobal(before -> wanted); }
-                persistChannel();
-                updateDetails();
-            });
-        })) { mRetrying = false; updateDetails(); }
+        })) {
+            if (targetRow) { mGlobalSaves--; mGlobalUnsaved = true; }
+            updateMenuRows();
+        }
     }
 
+    public boolean isReady() {
+        return mOwner != null && mOwner.active && mPreferences != null && mConnection != null;
+    }
+
+    /** Ensure global stores are loaded on the serialized settings worker before presenting standalone settings. */
+    public void whenReady(Runnable ready) {
+        if (ready == null) return;
+        if (Looper.myLooper() != Looper.getMainLooper()) { mUi.post(() -> whenReady(ready)); return; }
+        ensureInitialized();
+        if (isReady() || mOwner == null || !mOwner.active || mIo == null || mIo.isShutdown()) {
+            ready.run();
+            return;
+        }
+        mPendingReady.add(ready);
+    }
+
+    private void drainReadyCallbacks() {
+        if (mPendingReady.isEmpty()) return;
+        List<Runnable> callbacks = new ArrayList<>(mPendingReady);
+        mPendingReady.clear();
+        for (Runnable callback : callbacks) callback.run();
+    }
+
+    /** Append global AI subtitle settings (target language, display mode, model settings) to standalone Settings -> Subtitles. */
+    public void appendGlobalSettings(AppDialogPresenter dialog) {
+        if (dialog == null) return;
+        ensureInitialized();
+        appendGlobalItems(dialog, standaloneMenuToken());
+    }
+
+    /** Append flattened per-channel switch + global AI subtitle settings directly into the player subtitle menu. */
     public void appendMenu(AppDialogPresenter dialog) {
-        if (bridge() == null) return;
-        Owner owner = mOwner;
+        if (dialog == null || bridge() == null) return;
         Object source = mSource;
         Object token = menuToken();
         dialog.appendSingleSwitch(UiOptionItem.from(getContext().getString(R.string.caption_ai_channel), option -> {
@@ -336,97 +391,157 @@ public class CaptionSettingsController extends BasePlayerController implements A
             mSelection.translate(source, option.isSelected());
             applyBridge();
             persistChannel();
-            if (mConnection == null || !mConnection.hasKey || mGlobal.targetLanguage == null) message(R.string.caption_ai_not_configured);
+            if (option.isSelected() && (mConnection == null || !mConnection.hasKey || mGlobal.targetLanguage == null)) {
+                message(R.string.caption_ai_not_configured);
+            }
         }, mSelection.effective().translate));
-        Object globalToken = globalMenuToken();
-        dialog.appendSingleButton(UiOptionItem.from(getContext().getString(R.string.caption_ai_details), option -> {
-            if (globalMenuCurrent(globalToken)) showDetails();
-        }));
+        appendGlobalItems(dialog, globalMenuToken());
     }
+
     private Object globalMenuToken() {
-        MenuToken menu = mOwner == null ? null : new MenuToken(mOwner, null, mViewGeneration);
+        MenuToken menu = mOwner == null ? null : new MenuToken(mOwner, null, mViewGeneration, true);
         trace("global_menu_captured", menu);
+        return menu;
+    }
+    private Object standaloneMenuToken() {
+        MenuToken menu = mOwner == null ? null : new MenuToken(mOwner, null, 0, false);
+        trace("standalone_menu_captured", menu);
         return menu;
     }
     private boolean globalMenuCurrent(Object token) {
         if (!(token instanceof MenuToken)) return false;
         MenuToken menu = (MenuToken) token;
-        boolean valid = mViewActive && menu.viewGeneration == mViewGeneration && menu.owner != null &&
-                menu.owner == mOwner && menu.owner.active && getPlayer() != null;
+        boolean valid = menu.owner != null && menu.owner == mOwner && menu.owner.active &&
+                (!menu.requirePlayer || mViewActive && menu.viewGeneration == mViewGeneration && getPlayer() != null);
         trace(valid ? "global_menu_current" : "global_menu_expired", menu);
         return valid;
     }
-    private boolean current(Owner owner, Object source) { return mViewActive && owner != null && owner == mOwner && owner.active && source != null && source == mSource && getPlayer() != null; }
-    private void showDetails() {
-        if (mPreferences == null || mConnection == null) { message(R.string.caption_ai_loading); return; }
+    private boolean current(Owner owner, Object source) {
+        return mViewActive && owner != null && owner == mOwner && owner.active && source != null && source == mSource && getPlayer() != null;
+    }
+
+    private void appendGlobalItems(AppDialogPresenter dialog, Object token) {
         Owner owner = mOwner;
-        Object token = globalMenuToken();
-        AppDialogPresenter dialog = getAppDialogPresenter();
-        clearDetails();
-        mDetailsToken = token;
-        mDetailsState = (UiOptionItem) UiOptionItem.from(getContext().getString(detailsStatus()));
-        dialog.appendSingleButton(mDetailsState);
-        mDetailsTarget = (UiOptionItem) UiOptionItem.from(targetTitle(), option -> {
+        clearMenuRows();
+        mMenuToken = token;
+        mMenuTarget = (UiOptionItem) UiOptionItem.from(targetTitle(), option -> {
             if (!globalMenuCurrent(token)) return;
-            SimpleEditDialog.show(dialog.getContext(), getContext().getString(R.string.caption_ai_target), mGlobal.targetLanguage, value -> {
-                if (!globalMenuCurrent(token)) return true;
-                try { new CaptionPreferences.Global(value, mGlobal.mode, mGlobal.order, mGlobal.connectionId); }
-                catch (IllegalArgumentException ignored) { message(R.string.caption_ai_invalid_language); return false; }
-                changeGlobal(before -> new CaptionPreferences.Global(value, before.mode, before.order, before.connectionId));
-                return true;
-            });
+            if (mPreferences == null || mConnection == null) { message(R.string.caption_ai_loading); return; }
+            showTargetDialog(dialog.getContext(), token);
         });
-        dialog.appendSingleButton(mDetailsTarget);
+        dialog.appendSingleButton(mMenuTarget);
+
         List<OptionItem> modes = new ArrayList<>();
         mode(modes, token, R.string.caption_ai_original_first, NativeCueComposer.Mode.BILINGUAL, NativeCueComposer.Order.ORIGINAL_FIRST);
         mode(modes, token, R.string.caption_ai_translation_first, NativeCueComposer.Mode.BILINGUAL, NativeCueComposer.Order.TRANSLATION_FIRST);
         mode(modes, token, R.string.caption_ai_translation_only, NativeCueComposer.Mode.TRANSLATION, mGlobal.order);
         dialog.appendRadioCategory(getContext().getString(R.string.caption_ai_display), modes);
-        CaptionConnectionStore.Snapshot[] expected = {mConnection};
-        mDetailsConnection = (UiOptionItem) UiOptionItem.from(connectionTitle(), option -> {
+
+        mMenuConnection = (UiOptionItem) UiOptionItem.from(connectionTitle(), option -> {
             if (!globalMenuCurrent(token)) return;
+            if (mPreferences == null || mConnection == null) { message(R.string.caption_ai_loading); return; }
+            CaptionConnectionStore.Snapshot[] expected = {mConnection};
             CaptionConnectionDialog.show(dialog.getContext(), expected[0], () -> globalMenuCurrent(token), (connection, edit, key, completion) -> {
                 if (!globalMenuCurrent(token)) { completion.complete(false); return; }
                 saveConnection(owner, expected, connection, edit, key, completion);
             });
         });
-        dialog.appendSingleButton(mDetailsConnection);
-        dialog.appendSingleButton(UiOptionItem.from(getContext().getString(R.string.caption_ai_retry), option -> { if (globalMenuCurrent(token)) retry(); }));
-        dialog.showDialog(getContext().getString(R.string.caption_ai_details));
+        dialog.appendSingleButton(mMenuConnection);
     }
+
+    private void showTargetDialog(Context dialogContext, Object token) {
+        CharSequence[] items = new CharSequence[TARGET_CODES.length + 1];
+        int checked = -1;
+        String currentTarget = mGlobal.targetLanguage;
+        for (int i = 0; i < TARGET_CODES.length; i++) {
+            items[i] = dialogContext.getString(TARGET_LABELS[i]);
+            if (TARGET_CODES[i].equals(currentTarget)) checked = i;
+        }
+        String customLabel = dialogContext.getString(R.string.caption_ai_lang_custom);
+        if (currentTarget != null && checked < 0) {
+            checked = TARGET_CODES.length;
+            customLabel = customLabel + " (" + currentTarget + ")";
+        }
+        items[TARGET_CODES.length] = customLabel;
+        int selectedIndex = checked;
+        AlertDialog pickerDialog = new AlertDialog.Builder(dialogContext, R.style.AppDialog)
+                .setTitle(R.string.caption_ai_target)
+                .setSingleChoiceItems(items, selectedIndex, (picker, which) -> {
+                    picker.dismiss();
+                    if (!globalMenuCurrent(token)) return;
+                    if (which >= 0 && which < TARGET_CODES.length) {
+                        String code = TARGET_CODES[which];
+                        changeGlobal(before -> new CaptionPreferences.Global(code, before.mode, before.order, before.connectionId));
+                    } else {
+                        String initial = selectedIndex == TARGET_CODES.length && currentTarget != null ? currentTarget : "";
+                        SimpleEditDialog.show(dialogContext, getContext().getString(R.string.caption_ai_target),
+                                getContext().getString(R.string.caption_ai_lang_custom_hint), initial, raw -> {
+                                    if (!globalMenuCurrent(token)) return true;
+                                    String value = raw == null ? "" : raw.trim();
+                                    try { new CaptionPreferences.Global(value, mGlobal.mode, mGlobal.order, mGlobal.connectionId); }
+                                    catch (IllegalArgumentException ignored) { message(R.string.caption_ai_invalid_language); return false; }
+                                    changeGlobal(before -> new CaptionPreferences.Global(value, before.mode, before.order, before.connectionId));
+                                    return true;
+                                });
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .create();
+        try {
+            pickerDialog.show();
+        } catch (RuntimeException e) {
+            MessageHelpers.showMessage(dialogContext, e.getMessage());
+        }
+    }
+
+    private String languageLabel(String code) {
+        if (code == null) return getContext().getString(R.string.caption_ai_not_set);
+        for (int i = 0; i < TARGET_CODES.length; i++) {
+            if (TARGET_CODES[i].equals(code)) return getContext().getString(TARGET_LABELS[i]);
+        }
+        return code;
+    }
+
     private String targetTitle() {
-        String target = mGlobal.targetLanguage == null ? getContext().getString(R.string.caption_ai_not_set) : mGlobal.targetLanguage;
-        return getContext().getString(R.string.caption_ai_target) + ": " + target;
+        String header = getContext().getString(R.string.caption_ai_target) + ": " + languageLabel(mGlobal.targetLanguage);
+        if (mGlobalSaves > 0) return header + "\n" + getContext().getString(R.string.caption_ai_saving);
+        if (mGlobalUnsaved) return header + "\n" + getContext().getString(R.string.caption_ai_save_failed);
+        return header;
     }
-    private int detailsStatus() {
-        if (mGlobalSaves > 0 || mConnectionSaves > 0 || mChannelWrite != null || mRetrying) return R.string.caption_ai_saving;
-        if (mGlobalUnsaved || mChannelUnsaved || mConnectionUnsaved) return R.string.caption_ai_save_failed;
-        if (mSelection.channel() == null) return R.string.caption_ai_pending_channel;
-        return mSavedFeedback ? R.string.caption_ai_saved : R.string.caption_ai_scope_hint;
-    }
+
     private String connectionTitle() {
+        CaptionConnection conn = mConnection == null ? null : mConnection.connection;
+        String header = getContext().getString(R.string.caption_ai_connection);
+        if (conn != null && conn.wire.model != null && !conn.wire.model.isEmpty()) {
+            header = header + ": " + conn.wire.model;
+        }
         int status = mConnectionSaves > 0 ? R.string.caption_ai_saving :
+                mConnection == null ? R.string.caption_ai_loading :
                 mConnectionUnsaved || !mConnection.valid ? R.string.caption_ai_save_failed :
                 !mConnection.hasKey ? R.string.caption_ai_key_missing :
                 mConnection.persistentKey ? R.string.caption_ai_key_saved : R.string.caption_ai_key_memory;
-        return getContext().getString(R.string.caption_ai_connection) + "\n" + getContext().getString(status);
+        return header + "\n" + getContext().getString(status);
     }
-    private void updateDetails() {
-        if (mDetailsToken == null || !globalMenuCurrent(mDetailsToken)) { clearDetails(); return; }
-        mDetailsState.setTitle(getContext().getString(detailsStatus()));
-        mDetailsTarget.setTitle(targetTitle());
-        mDetailsConnection.setTitle(connectionTitle());
+
+    private void updateMenuRows() {
+        if (mMenuToken == null || !globalMenuCurrent(mMenuToken)) { clearMenuRows(); return; }
+        if (mMenuTarget != null) mMenuTarget.setTitle(targetTitle());
+        if (mMenuConnection != null) mMenuConnection.setTitle(connectionTitle());
     }
-    private void clearDetails() {
-        mDetailsToken = null;
-        mDetailsState = mDetailsTarget = mDetailsConnection = null;
+    private void clearMenuRows() {
+        mMenuToken = null;
+        mMenuTarget = mMenuConnection = null;
+    }
+    private boolean standaloneMenuActive() {
+        return mMenuToken instanceof MenuToken && !((MenuToken) mMenuToken).requirePlayer && globalMenuCurrent(mMenuToken);
     }
     private void mode(List<OptionItem> modes, Object token,
                       int title, NativeCueComposer.Mode mode, NativeCueComposer.Order order) {
         modes.add(UiOptionItem.from(getContext().getString(title), option -> {
-            if (globalMenuCurrent(token)) changeGlobal(before -> new CaptionPreferences.Global(before.targetLanguage, mode, order, before.connectionId));
+            if (globalMenuCurrent(token)) changeGlobal(before -> new CaptionPreferences.Global(before.targetLanguage, mode, order, before.connectionId), false);
         }, mGlobal.mode == mode && (mode != NativeCueComposer.Mode.BILINGUAL || mGlobal.order == order)));
     }
+
     interface WriteAllowed { boolean begin(); }
     interface KeySource { String get(); }
     interface Saved { void complete(SaveResult result); }
@@ -501,9 +616,8 @@ public class CaptionSettingsController extends BasePlayerController implements A
             CaptionConnectionStore.KeyEdit edit, KeySource key, boolean clear, WriteAllowed allowed, Saved completion) {
         CaptionConnectionStore.Snapshot captured = expected[0];
         mConnectionSaves++;
-        mSavedFeedback = false;
         applyBridge();
-        updateDetails();
+        updateMenuRows();
         if (!execute(() -> {
             ConnectionWrite written = writeConnection(owner.connection, owner.preferences, captured, connection, edit, key, clear,
                     () -> owner.active && allowed.begin());
@@ -513,9 +627,8 @@ public class CaptionSettingsController extends BasePlayerController implements A
                 SaveResult result = written.result;
                 if (!result.cancelled) {
                     if (result.snapshot != null) { mConnection = result.snapshot; expected[0] = result.snapshot; }
-                    mConnectionUnsaved = !result.saved;
+                    mConnectionUnsaved = !result.saved && (result.partial || result.snapshot == null || !result.snapshot.valid);
                     if (result.saved) {
-                        mSavedFeedback = true;
                         mPreferences = written.preferences;
                         mGlobal = new CaptionPreferences.Global(mGlobal.targetLanguage, mGlobal.mode, mGlobal.order,
                                 written.preferences.preferences.global.connectionId);
@@ -523,14 +636,14 @@ public class CaptionSettingsController extends BasePlayerController implements A
                     }
                 }
                 applyBridge();
-                updateDetails();
+                updateMenuRows();
                 completion.complete(result);
             });
         }, false)) {
             mConnectionSaves--;
             boolean cancelled = !owner.active || !allowed.begin();
             if (!cancelled) { mConnectionUnsaved = true; message(R.string.caption_ai_save_failed); }
-            applyBridge(); updateDetails();
+            applyBridge(); updateMenuRows();
             completion.complete(new SaveResult(false, false, cancelled, cancelled ? "CANCELLED" : "SAVE_FAILED", captured));
         }
     }

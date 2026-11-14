@@ -3,50 +3,51 @@ package com.liskovsoft.smartyoutubetv2.common.subtitle.settings;
 import android.app.Activity;
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
+import android.widget.EditText;
 import androidx.appcompat.app.AlertDialog;
+import com.google.android.exoplayer2.Format;
+import com.liskovsoft.mediaserviceinterfaces.data.MediaItemMetadata;
+import com.liskovsoft.mediaserviceinterfaces.oauth.Account;
 import com.liskovsoft.smartyoutubetv2.common.R;
+import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
-import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionConnection;
-import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionConnectionStore;
-import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionPreferenceStore;
-import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.ChatCompletionAdapter;
-import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionPreferences;
-import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.TranslationCoordinator;
+import com.liskovsoft.smartyoutubetv2.common.app.views.PlaybackView;
+import com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.ExoFormatItem;
+import com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.FormatItem;
+import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.presentation.CaptionOutputBridge;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.presentation.CaptionOutputBridgeTest;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.presentation.NativeCueComposer;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.source.CaptionSource;
-import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs;
-import com.liskovsoft.mediaserviceinterfaces.oauth.Account;
-import android.content.SharedPreferences;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionConnection;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionConnectionStore;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionPreferenceStore;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionPreferences;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.ChatCompletionAdapter;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.TranslationCoordinator;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Proxy;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import com.google.android.exoplayer2.Format;
-import com.liskovsoft.mediaserviceinterfaces.data.MediaItemMetadata;
-import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
-import com.liskovsoft.smartyoutubetv2.common.app.views.PlaybackView;
-import com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.ExoFormatItem;
-import com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.FormatItem;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.android.controller.ActivityController;
+import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowDialog;
 import org.robolectric.shadows.ShadowLog;
-import java.util.ArrayList;
-import java.util.List;
-import org.robolectric.annotation.Config;
 import org.robolectric.util.ReflectionHelpers;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Proxy;
-import java.util.Collections;
 import static org.junit.Assert.*;
 
 /** Native event adapter with no account service, network, real connection, disk writes or device. */
@@ -100,7 +101,7 @@ public class CaptionSettingsControllerTest {
         assertTrue(h.menuCurrent(first));
         h.onNewVideo(b);
         assertFalse(h.menuCurrent(first));
-        h.onNewVideo(a); // The same Video instance is allowed to be opened again; the token must still change.
+        h.onNewVideo(a);
         assertFalse(h.menuCurrent(first));
         Object reopened = h.menuToken();
         assertTrue(h.menuCurrent(reopened));
@@ -123,6 +124,121 @@ public class CaptionSettingsControllerTest {
             h.installOwner();
             assertFalse((Boolean) ReflectionHelpers.callInstanceMethod(h, "globalMenuCurrent", ReflectionHelpers.ClassParameter.from(Object.class, next)));
         } finally { h.onFinish(); }
+    }
+    @Test public void standaloneSettingsTokenWorksWithoutActivePlayerAndExpiresOnProfileChange() throws Exception {
+        ActivityController<Activity> home = activity();
+        Harness h = new Harness(false);
+        h.context = home.get();
+        MenuPresenter presenter = new MenuPresenter(home.get());
+        try {
+            boolean[] called = {false};
+            h.whenReady(() -> {
+                called[0] = true;
+                h.appendGlobalSettings(presenter);
+            });
+            awaitControllerIo(h);
+            assertTrue(called[0]);
+            assertEquals("Standalone global settings expose target + connection buttons and display radio category", 2, presenter.buttons.size());
+            assertEquals(1, presenter.radioCategories.size());
+            assertEquals(0, presenter.switches.size());
+
+            OptionItem targetButton = presenter.buttons.get(0);
+            targetButton.onSelect(true);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
+            assertNotNull(picker);
+            assertTrue(picker.isShowing());
+            picker.getListView().performItemClick(picker.getListView().getAdapter().getView(0, null, picker.getListView()), 0, 0);
+            awaitControllerIo(h);
+            assertFalse(picker.isShowing());
+            assertTrue(targetButton.getTitle().toString().contains(home.get().getString(R.string.caption_ai_lang_zh_hans)));
+
+            Object token = ReflectionHelpers.getField(h, "mMenuToken");
+            assertTrue((Boolean) ReflectionHelpers.callInstanceMethod(h, "globalMenuCurrent", ReflectionHelpers.ClassParameter.from(Object.class, token)));
+
+            // Player teardown events (engine release, view destroy, playback finish) must NOT break open standalone Settings -> Subtitles
+            h.onEngineReleased();
+            h.onViewDestroyed();
+            h.onFinish();
+            assertTrue((Boolean) ReflectionHelpers.callInstanceMethod(h, "globalMenuCurrent", ReflectionHelpers.ClassParameter.from(Object.class, token)));
+            targetButton.onSelect(true);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            AlertDialog pickerAfterFinish = (AlertDialog) ShadowDialog.getLatestDialog();
+            assertNotNull(pickerAfterFinish);
+            pickerAfterFinish.getListView().performItemClick(pickerAfterFinish.getListView().getAdapter().getView(3, null, pickerAfterFinish.getListView()), 3, 3);
+            awaitControllerIo(h);
+            assertTrue("Standalone row title must still update after background player teardown",
+                    targetButton.getTitle().toString().contains(home.get().getString(R.string.caption_ai_lang_ja)));
+
+            h.onProfileChanged();
+            assertFalse((Boolean) ReflectionHelpers.callInstanceMethod(h, "globalMenuCurrent", ReflectionHelpers.ClassParameter.from(Object.class, token)));
+        } finally {
+            h.onStandaloneClosed();
+            h.onFinish();
+            home.pause().stop().destroy();
+        }
+    }
+    @Test public void whenReadyWaitsForLatestProfileLoadWhenProfileChangesMidHydration() throws Exception {
+        ActivityController<Activity> home = activity();
+        Harness h = new Harness(false);
+        h.context = home.get();
+        try {
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).pause();
+            boolean[] readyFired = {false};
+            boolean[] storesReadyAtFire = {false};
+            h.whenReady(() -> {
+                readyFired[0] = true;
+                storesReadyAtFire[0] = h.isReady();
+            });
+            // Trigger a second profile reload before the first load's UI post runs
+            h.onProfileChanged();
+            assertFalse("whenReady must not fire before the active profile finishes hydrating", readyFired[0]);
+            ThreadPoolExecutor io = ReflectionHelpers.getField(h, "mIo");
+            CountDownLatch drained = new CountDownLatch(1);
+            io.execute(drained::countDown);
+            assertTrue(drained.await(5, TimeUnit.SECONDS));
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            assertTrue(readyFired[0]);
+            assertTrue("Stores must be fully hydrated when ready callback runs", storesReadyAtFire[0]);
+        } finally {
+            h.onFinish();
+            home.pause().stop().destroy();
+        }
+    }
+    @Test public void customLanguageCodeOptionValidatesTrimsAndPreselectsOnReopen() throws Exception {
+        ActivityController<Activity> menu = activity();
+        Harness h = new Harness(false);
+        h.context = menu.get();
+        MenuPresenter presenter = new MenuPresenter(menu.get());
+        try {
+            h.whenReady(() -> h.appendGlobalSettings(presenter));
+            awaitControllerIo(h);
+            OptionItem targetButton = presenter.buttons.get(0);
+            targetButton.onSelect(true);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
+            int customIndex = picker.getListView().getCount() - 1;
+            picker.getListView().performItemClick(picker.getListView().getAdapter().getView(customIndex, null, picker.getListView()), customIndex, customIndex);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+
+            AlertDialog customDialog = (AlertDialog) ShadowDialog.getLatestDialog();
+            assertNotSame(picker, customDialog);
+            EditText input = customDialog.findViewById(R.id.simple_edit_value);
+            input.setText("  pt-BR  ");
+            customDialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+            awaitControllerIo(h);
+            assertFalse(customDialog.isShowing());
+            assertTrue(targetButton.getTitle().toString().endsWith(": pt-BR"));
+
+            targetButton.onSelect(true);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            AlertDialog reopened = (AlertDialog) ShadowDialog.getLatestDialog();
+            assertEquals(customIndex, reopened.getListView().getCheckedItemPosition());
+            reopened.dismiss();
+        } finally {
+            h.onFinish();
+            menu.pause().stop().destroy();
+        }
     }
     @Test public void engineOrViewRecreationCannotReviveOldDialogActionsForTheSameVideo() throws Exception {
         Harness h = new Harness();
@@ -175,10 +291,11 @@ public class CaptionSettingsControllerTest {
     @Test public void connectionEditorUsesTheNativeMenuActivityNotTheCoveredPlaybackActivity() throws Exception {
         assertEditorOwner(R.string.caption_ai_connection);
     }
-    @Test public void connectionKeyStateIsVisibleInTheNativeButtonTitleWithoutExposingTheKey() throws Exception {
+    @Test public void flattenedPlayerMenuShowsFourCleanControlsAndModelSummaryWithoutExposingTheKey() throws Exception {
         ActivityController<Activity> playback = activity(), menu = activity();
         Harness h = new Harness();
         h.context = playback.get();
+        h.captionBridge = new CaptionOutputBridgeTest.AccountPlayback().bridge;
         MenuPresenter presenter = new MenuPresenter(menu.get());
         h.dialogPresenter = presenter;
         CaptionPreferenceStore preferences = new CaptionPreferenceStore(playback.get(), "synthetic-visible-status", new CaptionPreferenceStore.Limits(32, 65536));
@@ -187,7 +304,11 @@ public class CaptionSettingsControllerTest {
             ReflectionHelpers.setField(h, "mPreferences", preferences.load());
             ReflectionHelpers.setField(h, "mConnection", connection.load());
             h.onNewVideo(video("synthetic-a"));
-            ReflectionHelpers.callInstanceMethod(h, "showDetails");
+            h.appendMenu(presenter);
+            assertEquals("Exactly 1 channel switch", 1, presenter.switches.size());
+            assertEquals("Exactly 1 display radio category", 1, presenter.radioCategories.size());
+            assertEquals("Exactly 2 global action rows (target language + model settings), no status/retry clutter", 2, presenter.buttons.size());
+
             OptionItem row = presenter.buttons.stream().filter(item -> item.getTitle().toString().startsWith(menu.get().getString(R.string.caption_ai_connection))).findFirst().get();
             assertTrue("Native singleButton only renders its title", row.getTitle().toString().contains(menu.get().getString(R.string.caption_ai_key_missing)));
             String key = "synthetic-visible-status-not-a-real-key";
@@ -195,10 +316,11 @@ public class CaptionSettingsControllerTest {
                     "https://synthetic.invalid/v1/chat/completions", "synthetic-model", 1024, ChatCompletionAdapter.Thinking.OMIT), CaptionConnectionStore.KeyEdit.REPLACE, key);
             assertNotNull(saved);
             ReflectionHelpers.setField(h, "mConnection", saved);
-            presenter.buttons.clear();
-            ReflectionHelpers.callInstanceMethod(h, "showDetails");
+            presenter.clearCaptured();
+            h.appendMenu(presenter);
             row = presenter.buttons.stream().filter(item -> item.getTitle().toString().startsWith(menu.get().getString(R.string.caption_ai_connection))).findFirst().get();
             int status = saved.persistentKey ? R.string.caption_ai_key_saved : R.string.caption_ai_key_memory;
+            assertTrue(row.getTitle().toString().contains("synthetic-model"));
             assertTrue(row.getTitle().toString().contains(menu.get().getString(status)));
             assertFalse(row.getTitle().toString().contains(key));
         } finally {
@@ -210,6 +332,7 @@ public class CaptionSettingsControllerTest {
         ActivityController<Activity> playback = activity(), menu = activity();
         Harness h = new Harness();
         h.context = playback.get();
+        h.captionBridge = new CaptionOutputBridgeTest.AccountPlayback().bridge;
         MenuPresenter presenter = new MenuPresenter(menu.get());
         h.dialogPresenter = presenter;
         CaptionPreferenceStore preferences = new CaptionPreferenceStore(playback.get(), "synthetic-menu-window", new CaptionPreferenceStore.Limits(32, 65536));
@@ -219,7 +342,7 @@ public class CaptionSettingsControllerTest {
             ReflectionHelpers.setField(h, "mPreferences", preferences.load());
             ReflectionHelpers.setField(h, "mConnection", connection.load());
             h.onNewVideo(video("synthetic-a"));
-            ReflectionHelpers.callInstanceMethod(h, "showDetails");
+            h.appendMenu(presenter);
             OptionItem option = presenter.buttons.stream().filter(item -> item.getTitle().toString().startsWith(menu.get().getString(title))).findFirst().get();
             option.onSelect(true);
             org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
@@ -235,6 +358,13 @@ public class CaptionSettingsControllerTest {
             menu.pause().stop().destroy(); playback.pause().stop().destroy();
         }
     }
+    private static void awaitControllerIo(CaptionSettingsController controller) throws Exception {
+        ThreadPoolExecutor io = ReflectionHelpers.getField(controller, "mIo");
+        CountDownLatch ready = new CountDownLatch(1);
+        io.execute(ready::countDown);
+        assertTrue(ready.await(5, TimeUnit.SECONDS));
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+    }
     private static ActivityController<Activity> activity() {
         ActivityController<Activity> owner = Robolectric.buildActivity(Activity.class);
         owner.get().setTheme(androidx.appcompat.R.style.Theme_AppCompat);
@@ -243,12 +373,16 @@ public class CaptionSettingsControllerTest {
     }
     private static final class MenuPresenter extends AppDialogPresenter {
         final Context context;
+        final List<OptionItem> switches = new ArrayList<>();
         final List<OptionItem> buttons = new ArrayList<>();
+        final List<CharSequence> radioCategories = new ArrayList<>();
         MenuPresenter(Context context) { super(context); this.context = context; }
         @Override public Context getContext() { return context; }
+        @Override public void appendSingleSwitch(OptionItem item) { switches.add(item); }
         @Override public void appendSingleButton(OptionItem item) { buttons.add(item); }
-        @Override public void appendRadioCategory(CharSequence title, List<OptionItem> items) { }
+        @Override public void appendRadioCategory(CharSequence title, List<OptionItem> items) { radioCategories.add(title); }
         @Override public void showDialog(CharSequence title) { }
+        void clearCaptured() { switches.clear(); buttons.clear(); radioCategories.clear(); }
     }
 
     @Test
@@ -263,7 +397,6 @@ public class CaptionSettingsControllerTest {
             assertFalse(s.appPrefs.isMultiProfilesEnabled());
             assertEquals(1, s.playback.calls());
 
-            // Actual AppPrefs callback and actual controller listener, not swapping two unrelated Store fixtures.
             s.appPrefs.onAccountChanged(account("synthetic-cache-account-b", 2));
             assertEquals("Default native settings are still in the shared bucket", scopeBefore, s.appPrefs.getProfileScope());
             assertNotSame(oldOwner, ReflectionHelpers.getField(s.controller, "mOwner"));
@@ -290,7 +423,7 @@ public class CaptionSettingsControllerTest {
             Object accountOwner = ReflectionHelpers.getField(s.controller, "mOwner");
             CaptionConnectionStore previous = s.ownedConnection();
             SharedPreferences bucket = ReflectionHelpers.getField(previous, "mPreferences");
-            previous.close(); // A blanket close()->revoke workaround must not break same-account reload.
+            previous.close();
             CaptionConnectionStore reopened = new CaptionConnectionStore(s.controller.context, s.appPrefs.getProfileScope());
             CaptionConnectionStore.Snapshot reloaded = reopened.load();
             assertSame(bucket, ReflectionHelpers.getField(reopened, "mPreferences"));
@@ -311,7 +444,6 @@ public class CaptionSettingsControllerTest {
         }
     }
 
-    /** Account notification keeps this host/bridge alive, as the controller's actual profile callback permits. */
     private static final class SharedBucketScenario implements AutoCloseable {
         final Harness controller;
         final CaptionOutputBridgeTest.AccountPlayback playback;
@@ -360,11 +492,7 @@ public class CaptionSettingsControllerTest {
             return ReflectionHelpers.getField(ReflectionHelpers.getField(controller, "mOwner"), "connection");
         }
         void awaitSettings() throws Exception {
-            ThreadPoolExecutor io = ReflectionHelpers.getField(controller, "mIo");
-            CountDownLatch ready = new CountDownLatch(1);
-            io.execute(ready::countDown);
-            assertTrue("Settings work must finish before its UI completion is drained", ready.await(5, TimeUnit.SECONDS));
-            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            awaitControllerIo(controller);
             assertNotNull(ReflectionHelpers.getField(controller, "mConnection"));
         }
         void changeTarget(String target) throws Exception {

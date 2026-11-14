@@ -3,6 +3,12 @@
 This log covers the enhancement fork. Upstream release history remains available
 in [SmartTube releases](https://github.com/yuliskov/SmartTube/releases).
 
+## 增强修订 11
+
+- 拍平播放页双语字幕菜单，直接展示频道双语开关、常用翻译语言列表（支持自定义语言代码）、字幕显示方式与 AI 模型设置；同步在主页「设置 → 字幕」顶部补齐全局配置入口。
+- 模型设置改为「接口类型／快捷填入 + 接口地址 + 模型 ID + API Key」主屏结构，将推理思考控制、单次最大输出长度与可选 Workspace ID 收纳进默认折叠的「高级选项」；支持 OpenAI 兼容 Chat 地址的常见简写自动补全（仍拦截明文 `http://`）。
+- 修复后台播放器销毁与冷启动账号加载重入对独立字幕设置页的影响，补齐电视遥控器 `Enter` 确认键唤起软键盘与折叠按钮落焦高亮，并移除 `AndroidManifest.xml` 中未使用的残留权限声明。
+
 ## 增强修订 10
 
 - 修复 WebVTT 相同词级时间标记导致整条字幕无法增强的问题；同时刻文本共用时间窗口，不丢字或改写原始字幕时钟。

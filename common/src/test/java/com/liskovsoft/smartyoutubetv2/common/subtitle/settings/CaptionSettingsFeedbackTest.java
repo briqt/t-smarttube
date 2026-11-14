@@ -11,18 +11,12 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.views.PlaybackView;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.presentation.CaptionOutputBridge;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.presentation.CaptionOutputBridgeTest;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionConnection;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionConnectionStore;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionPreferenceStore;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.translation.ChatCompletionAdapter;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.robolectric.Robolectric;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.android.controller.ActivityController;
-import org.robolectric.annotation.Config;
-import org.robolectric.shadows.ShadowDialog;
-import org.robolectric.util.ReflectionHelpers;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -36,6 +30,14 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.Robolectric;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.android.controller.ActivityController;
+import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowDialog;
+import org.robolectric.util.ReflectionHelpers;
 import static org.junit.Assert.*;
 
 /** Real native editors and stores, with explicit worker/ack ordering and synthetic credentials only. */
@@ -45,55 +47,54 @@ public class CaptionSettingsFeedbackTest {
     private static final String ENDPOINT = "https://synthetic.invalid/v1/chat/completions";
     private static final String KEY = "synthetic-feedback-not-a-real-key";
 
-    @Test public void targetAndSaveStateUpdateTheExistingRowsOnlyAfterTheActualAck() throws Exception {
+    @Test public void targetAndSaveStateUpdateTheExistingRowOnlyAfterTheActualAck() throws Exception {
         try (Harness h = new Harness()) {
-            h.target("fr");
-            assertTrue(h.targetTitle().endsWith(": fr"));
-            assertEquals(h.text(R.string.caption_ai_saving), h.stateTitle());
+            h.customTarget("it");
+            assertTrue(h.targetTitle().contains(": it"));
+            assertTrue(h.targetTitle().contains(h.text(R.string.caption_ai_saving)));
             assertNull(h.preferences.load().preferences.global.targetLanguage);
-            assertEquals(1, h.menu.shows);
+            assertEquals(0, h.menu.shows);
             h.work();
-            assertEquals("fr", h.preferences.load().preferences.global.targetLanguage);
-            assertEquals(h.text(R.string.caption_ai_saved), h.stateTitle());
-            assertEquals(1, h.menu.shows);
+            assertEquals("it", h.preferences.load().preferences.global.targetLanguage);
+            assertEquals(h.text(R.string.caption_ai_target) + ": it", h.targetTitle());
+            assertEquals(0, h.menu.shows);
         }
     }
-    @Test public void failedDiskCommitStaysVisibleAndExplicitRetryRestoresThenSavesThePendingTarget() throws Exception {
+    @Test public void failedDiskCommitShowsOnTargetRowAndNextSelectionRecoversAndSavesWithoutSeparateRetryButton() throws Exception {
         try (Harness h = new Harness()) {
             h.failCommit = true;
-            h.target("fr"); h.work();
-            assertEquals(h.text(R.string.caption_ai_save_failed), h.stateTitle());
-            assertTrue(h.targetTitle().endsWith(": fr"));
+            h.presetTarget(6); // fr
+            h.work();
+            assertTrue(h.targetTitle().contains(h.text(R.string.caption_ai_lang_fr)));
+            assertTrue(h.targetTitle().contains(h.text(R.string.caption_ai_save_failed)));
             assertFalse(h.preferences.load().valid);
             h.failCommit = false;
-            h.button(R.string.caption_ai_retry).onSelect(true);
-            assertEquals(h.text(R.string.caption_ai_saving), h.stateTitle());
-            h.work(); // Recover last-good, then enqueue the pending target write.
-            assertEquals(h.text(R.string.caption_ai_saving), h.stateTitle());
+            h.presetTarget(6); // Re-selecting recovers last-good and commits 'fr'
+            assertTrue(h.targetTitle().contains(h.text(R.string.caption_ai_saving)));
             h.work();
-            assertEquals(h.text(R.string.caption_ai_saved), h.stateTitle());
+            assertEquals(h.text(R.string.caption_ai_target) + ": " + h.text(R.string.caption_ai_lang_fr), h.targetTitle());
             assertEquals("fr", h.preferences.load().preferences.global.targetLanguage);
-            assertEquals(1, h.menu.shows);
+            assertEquals(0, h.menu.shows);
         }
     }
-    @Test public void aRejectedWorkerDoesNotLeaveTheDetailRowsStuckAtSaving() throws Exception {
+    @Test public void aRejectedWorkerDoesNotLeaveTheTargetRowStuckAtSaving() throws Exception {
         try (Harness h = new Harness()) {
             h.worker.reject = true;
-            h.target("fr");
-            assertEquals(h.text(R.string.caption_ai_save_failed), h.stateTitle());
+            h.presetTarget(0); // zh-Hans
+            assertTrue(h.targetTitle().contains(h.text(R.string.caption_ai_save_failed)));
             assertEquals(0, (int) ReflectionHelpers.getField(h.controller, "mGlobalSaves"));
-            assertEquals(1, h.menu.shows);
+            assertEquals(0, h.menu.shows);
         }
     }
-    @Test public void globalAckUpdatesItsExistingRowsAcrossSourceChangesWithoutReopeningAMenu() throws Exception {
+    @Test public void globalAckUpdatesItsExistingRowAcrossSourceChangesWithoutReopeningAMenu() throws Exception {
         try (Harness h = new Harness()) {
-            h.target("fr");
+            h.presetTarget(3); // ja
             Video next = new Video(); next.videoId = "synthetic-next"; next.channelId = "synthetic-next-channel";
             h.controller.onNewVideo(next);
             h.work();
-            assertEquals(h.text(R.string.caption_ai_saved), h.stateTitle());
-            assertEquals(1, h.menu.shows);
-            assertEquals("fr", h.preferences.load().preferences.global.targetLanguage);
+            assertEquals(h.text(R.string.caption_ai_target) + ": " + h.text(R.string.caption_ai_lang_ja), h.targetTitle());
+            assertEquals(0, h.menu.shows);
+            assertEquals("ja", h.preferences.load().preferences.global.targetLanguage);
         }
     }
     @Test public void globalConnectionCanOpenAndSaveAcrossSourceChangesWhileChannelTokensExpire() throws Exception {
@@ -114,8 +115,9 @@ public class CaptionSettingsFeedbackTest {
             assertFalse(editor.isShowing());
             assertNotNull(h.connection.load().connection);
             assertFalse(h.connection.load().hasKey);
-            assertEquals(h.text(R.string.caption_ai_saved), h.stateTitle());
-            assertEquals(1, h.menu.shows);
+            assertTrue(h.connectionTitle().contains("synthetic-model"));
+            assertTrue(h.connectionTitle().contains(h.text(R.string.caption_ai_key_missing)));
+            assertEquals(0, h.menu.shows);
         }
     }
     @Test public void aChangedOwnerStillRejectsTheOldGlobalEditorBeforeSubmitting() throws Exception {
@@ -152,7 +154,7 @@ public class CaptionSettingsFeedbackTest {
             assertTrue(h.worker.pending.isEmpty());
             assertEquals(before.revision, h.connection.load().revision);
             assertNull(h.connection.load().connection);
-            assertEquals(1, h.menu.shows);
+            assertEquals(0, h.menu.shows);
         }
     }
     @Test public void cancellingTheConnectionEditorDoesNotLetItsLateAckReopenIt() throws Exception {
@@ -162,35 +164,53 @@ public class CaptionSettingsFeedbackTest {
             h.fill(editor, R.id.caption_ai_model, "synthetic-model");
             h.fill(editor, R.id.caption_ai_key, KEY);
             h.ok(editor);
-            assertEquals(h.text(R.string.caption_ai_saving), h.stateTitle());
             assertTrue(h.connectionTitle().contains(h.text(R.string.caption_ai_saving)));
             editor.dismiss(); h.drain();
             h.work();
             assertFalse(editor.isShowing());
-            assertEquals(h.text(R.string.caption_ai_saved), h.stateTitle());
             CaptionConnectionStore.Snapshot saved = h.connection.load();
             assertTrue(saved.hasKey);
+            assertTrue(h.connectionTitle().contains("synthetic-model"));
             assertTrue(h.connectionTitle().contains(h.text(saved.persistentKey ? R.string.caption_ai_key_saved : R.string.caption_ai_key_memory)));
             assertFalse(h.connectionTitle().contains(KEY));
-            assertEquals(1, h.menu.shows);
+            assertEquals(0, h.menu.shows);
+        }
+    }
+    @Test public void targetChangeWithBlankKeyPromptsForReplacementKeyWithoutPoisoningBoundConnectionStatus() throws Exception {
+        try (Harness h = new Harness(true)) {
+            CaptionConnectionStore.Snapshot original = h.connection.load();
+            String readyTitle = h.connectionTitle();
+            AlertDialog editor = h.connectionEditor();
+            h.fill(editor, R.id.caption_ai_endpoint, "https://other.synthetic.invalid/v1/chat/completions");
+            h.ok(editor);
+            assertTrue(editor.isShowing());
+            assertTrue(h.worker.pending.isEmpty());
+            assertEquals(h.text(R.string.caption_ai_connection_notice),
+                    ((android.widget.TextView) editor.findViewById(R.id.caption_ai_error)).getText().toString());
+            assertEquals("Existing working connection must remain usable if user cancels", readyTitle, h.connectionTitle());
+            assertEquals(original.revision, h.connection.load().revision);
+
+            h.fill(editor, R.id.caption_ai_key, KEY + "-replacement");
+            h.ok(editor); h.work();
+            assertFalse(editor.isShowing());
+            assertFalse(h.connectionTitle().contains(h.text(R.string.caption_ai_save_failed)));
+            assertEquals(0, h.menu.shows);
         }
     }
     @Test public void connectionRejectionAndSameEditorRetryUpdateTheBoundStatusWithoutRebuildingThePage() throws Exception {
         try (Harness h = new Harness(true)) {
-            CaptionConnectionStore.Snapshot original = h.connection.load();
+            h.failCommit = true;
             AlertDialog editor = h.connectionEditor();
-            h.fill(editor, R.id.caption_ai_endpoint, "https://other.synthetic.invalid/v1/chat/completions");
+            h.fill(editor, R.id.caption_ai_model, "synthetic-model-v2");
             h.ok(editor); h.work();
             assertTrue(editor.isShowing());
-            assertEquals(h.text(R.string.caption_ai_save_failed), h.stateTitle());
             assertTrue(h.connectionTitle().contains(h.text(R.string.caption_ai_save_failed)));
-            assertEquals(original.revision, h.connection.load().revision);
-            h.fill(editor, R.id.caption_ai_key, KEY + "-replacement");
+            h.failCommit = false;
             h.ok(editor); h.work();
             assertFalse(editor.isShowing());
-            assertEquals(h.text(R.string.caption_ai_saved), h.stateTitle());
+            assertTrue(h.connectionTitle().contains("synthetic-model-v2"));
             assertFalse(h.connectionTitle().contains(h.text(R.string.caption_ai_save_failed)));
-            assertEquals(1, h.menu.shows);
+            assertEquals(0, h.menu.shows);
         }
     }
 
@@ -211,6 +231,7 @@ public class CaptionSettingsFeedbackTest {
         int shows, changes;
         Menu(Context context) { super(context); this.context = context; }
         @Override public Context getContext() { return context; }
+        @Override public void appendSingleSwitch(OptionItem item) { }
         @Override public void appendSingleButton(OptionItem item) {
             buttons.add(item); titles.put(item, item.getTitle().toString());
             item.setOnTitleChanged(() -> { changes++; titles.put(item, item.getTitle().toString()); });
@@ -221,14 +242,16 @@ public class CaptionSettingsFeedbackTest {
     private static final class Controller extends CaptionSettingsController {
         final Context context;
         final Menu menu;
+        final CaptionOutputBridge bridge = new CaptionOutputBridgeTest.AccountPlayback().bridge;
         final PlaybackView player = (PlaybackView) Proxy.newProxyInstance(PlaybackView.class.getClassLoader(), new Class<?>[]{PlaybackView.class},
                 (proxy, method, args) -> {
+                    if (method.getName().equals("getCaptionOutputBridge")) return bridge;
                     if (method.getReturnType() == boolean.class) return false;
                     if (method.getReturnType() == int.class) return 0;
                     if (method.getReturnType() == long.class) return 0L;
                     return null;
                 });
-        Controller(Context context, Menu menu) { this.context = context; this.menu = menu; }
+        Controller(Context context, Menu menu) throws Exception { this.context = context; this.menu = menu; }
         @Override public Context getContext() { return context; }
         @Override public PlaybackView getPlayer() { return player; }
         @Override protected AppDialogPresenter getAppDialogPresenter() { return menu; }
@@ -274,17 +297,26 @@ public class CaptionSettingsFeedbackTest {
             controller.onViewCreated();
             Video video = new Video(); video.videoId = "synthetic-video"; video.channelId = "synthetic-channel";
             controller.onNewVideo(video);
-            ReflectionHelpers.callInstanceMethod(controller, "showDetails");
+            controller.appendMenu(menu);
         }
         String text(int id) { return menu.context.getString(id); }
         OptionItem button(int title) { return menu.buttons.stream().filter(item -> item.getTitle().toString().startsWith(text(title))).findFirst().get(); }
-        String stateTitle() { return menu.titles.get(menu.buttons.get(0)); }
         String targetTitle() { return menu.titles.get(button(R.string.caption_ai_target)); }
         String connectionTitle() { return menu.titles.get(button(R.string.caption_ai_connection)); }
         void drain() { org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle(); }
         void work() { worker.next(); drain(); }
-        void target(String value) {
+        void presetTarget(int index) {
             button(R.string.caption_ai_target).onSelect(true); drain();
+            AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
+            picker.getListView().performItemClick(picker.getListView().getAdapter().getView(index, null, picker.getListView()), index, index);
+            drain();
+        }
+        void customTarget(String value) {
+            button(R.string.caption_ai_target).onSelect(true); drain();
+            AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
+            int customIndex = picker.getListView().getCount() - 1;
+            picker.getListView().performItemClick(picker.getListView().getAdapter().getView(customIndex, null, picker.getListView()), customIndex, customIndex);
+            drain();
             AlertDialog dialog = (AlertDialog) ShadowDialog.getLatestDialog();
             fill(dialog, R.id.simple_edit_value, value); ok(dialog);
         }

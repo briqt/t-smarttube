@@ -13,5 +13,5 @@ public enum CaptionService {
 
     CaptionService(String endpoint) { defaultEndpoint = endpoint; }
 
-    boolean chat() { return this == CUSTOM_CHAT || this == OPENAI_CHAT || this == DEEPSEEK; }
+    public boolean chat() { return this == CUSTOM_CHAT || this == OPENAI_CHAT || this == DEEPSEEK; }
 }

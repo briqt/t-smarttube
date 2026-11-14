@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.text.method.PasswordTransformationMethod;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -76,6 +77,8 @@ public class CaptionConnectionDialogTest {
         try {
             h.validFields(); h.field(R.id.caption_ai_endpoint).setText("http://synthetic.invalid/insecure"); h.ok();
             assertEquals(0, h.calls);
+            h.validFields(); h.field(R.id.caption_ai_endpoint).setText("javascript:alert(1)"); h.ok();
+            assertEquals(0, h.calls);
             h.validFields(); h.field(R.id.caption_ai_model).setText(""); h.ok();
             assertEquals(0, h.calls);
             h.validFields(); h.field(R.id.caption_ai_output_tokens).setText("0"); h.ok();
@@ -137,13 +140,33 @@ public class CaptionConnectionDialogTest {
         } finally { h.close(); }
     }
 
-    @Test public void newConnectionDefaultsToAutomaticLowWithoutChoosingAModel() {
+    @Test public void advancedOptionsStartCollapsedAndToggleCleanlyWithoutJargonPolicyBanner() {
         Harness h = new Harness(false);
         try {
+            View advanced = h.dialog.findViewById(R.id.caption_ai_advanced_fields);
+            Button toggle = h.dialog.findViewById(R.id.caption_ai_advanced_toggle);
+            assertNotNull(advanced);
+            assertNotNull(toggle);
+            assertEquals(View.GONE, advanced.getVisibility());
+            assertEquals(h.activity.getString(R.string.caption_ai_advanced_collapsed), toggle.getText().toString());
             assertEquals(CaptionService.CUSTOM_CHAT.ordinal(), h.spinner(R.id.caption_ai_service).getSelectedItemPosition());
             assertEquals(0, h.spinner(R.id.caption_ai_thinking).getSelectedItemPosition());
             assertEquals("", h.field(R.id.caption_ai_model).getText().toString());
             assertEquals("8192", h.field(R.id.caption_ai_output_tokens).getText().toString());
+            assertTrue("TV Enter remotes must be handled by EditText key listener",
+                    h.field(R.id.caption_ai_endpoint).onKeyDown(android.view.KeyEvent.KEYCODE_ENTER,
+                            new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER)) ||
+                    h.field(R.id.caption_ai_endpoint).dispatchKeyEvent(
+                            new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER)));
+
+            toggle.performClick(); h.drain();
+            assertEquals(View.VISIBLE, advanced.getVisibility());
+            assertEquals(h.activity.getString(R.string.caption_ai_advanced_expanded), toggle.getText().toString());
+
+            toggle.performClick(); h.drain();
+            assertEquals(View.GONE, advanced.getVisibility());
+            assertEquals(h.activity.getString(R.string.caption_ai_advanced_collapsed), toggle.getText().toString());
+
             h.validFields(); h.ok();
             assertEquals(1, h.calls);
             assertEquals(ChatCompletionAdapter.Thinking.AUTO_LOW, h.connection.wire.thinking);
@@ -151,10 +174,44 @@ public class CaptionConnectionDialogTest {
             assertNull(h.connection.wire.workspaceId);
         } finally { h.close(); }
     }
-    @Test public void existingManualThinkingSurvivesOpeningButCannotFollowAPlatformChange() {
+    @Test public void shorthandEndpointsAutoCompleteInChatModesWhilePreservingExplicitPaths() {
+        assertEquals("https://api.example.invalid/v1/chat/completions",
+                CaptionConnectionDialog.normalizeEndpoint(CaptionService.CUSTOM_CHAT, "api.example.invalid"));
+        assertEquals("https://api.example.invalid/v1/chat/completions",
+                CaptionConnectionDialog.normalizeEndpoint(CaptionService.CUSTOM_CHAT, "https://api.example.invalid/"));
+        assertEquals("https://api.deepseek.com/chat/completions",
+                CaptionConnectionDialog.normalizeEndpoint(CaptionService.DEEPSEEK, "api.deepseek.com"));
+        assertEquals("https://relay.example.invalid:8443/v1/chat/completions",
+                CaptionConnectionDialog.normalizeEndpoint(CaptionService.CUSTOM_CHAT, "relay.example.invalid:8443/v1"));
+        assertEquals("https://ark.example.invalid/api/v3/chat/completions",
+                CaptionConnectionDialog.normalizeEndpoint(CaptionService.CUSTOM_CHAT, "https://ark.example.invalid/api/v3/"));
+        assertEquals("https://dashscope.example.invalid/compatible-mode/v1/chat/completions",
+                CaptionConnectionDialog.normalizeEndpoint(CaptionService.CUSTOM_CHAT, "https://dashscope.example.invalid/compatible-mode/v1"));
+        assertEquals("https://fixture.invalid/chat",
+                CaptionConnectionDialog.normalizeEndpoint(CaptionService.CUSTOM_CHAT, "https://fixture.invalid/chat"));
+        assertEquals("https://fixture.invalid/custom/chat/",
+                CaptionConnectionDialog.normalizeEndpoint(CaptionService.CUSTOM_CHAT, "https://fixture.invalid/custom/chat/"));
+        assertEquals("http://synthetic.invalid/insecure",
+                CaptionConnectionDialog.normalizeEndpoint(CaptionService.CUSTOM_CHAT, "http://synthetic.invalid/insecure"));
+        assertEquals("https://generativelanguage.googleapis.com/v1beta/models",
+                CaptionConnectionDialog.normalizeEndpoint(CaptionService.GEMINI, "generativelanguage.googleapis.com/v1beta/models"));
+
+        Harness h = new Harness(false);
+        try {
+            h.field(R.id.caption_ai_endpoint).setText("relay.synthetic.invalid/v1");
+            h.field(R.id.caption_ai_model).setText("deepseek-chat");
+            h.key().setText(KEY);
+            h.ok();
+            assertEquals(1, h.calls);
+            assertEquals("https://relay.synthetic.invalid/v1/chat/completions", h.connection.wire.endpoint.toString());
+            assertEquals("https://relay.synthetic.invalid/v1/chat/completions", h.field(R.id.caption_ai_endpoint).getText().toString());
+        } finally { h.close(); }
+    }
+    @Test public void existingManualThinkingSurvivesOpeningWhileCollapsedButResetsAcrossIncompatiblePlatformChange() {
         Harness h = new Harness(CaptionConnection.basic(CaptionService.DEEPSEEK.defaultEndpoint, "synthetic-model", 1024,
                 ChatCompletionAdapter.Thinking.DEEPSEEK_DISABLED, CaptionService.DEEPSEEK, null));
         try {
+            assertEquals(View.GONE, h.dialog.findViewById(R.id.caption_ai_advanced_fields).getVisibility());
             assertEquals(CaptionService.DEEPSEEK.ordinal(), h.spinner(R.id.caption_ai_service).getSelectedItemPosition());
             assertEquals(2, h.spinner(R.id.caption_ai_thinking).getSelectedItemPosition());
             h.ok();
@@ -172,12 +229,13 @@ public class CaptionConnectionDialogTest {
             assertEquals(ChatCompletionAdapter.Thinking.AUTO_LOW, h.connection.wire.thinking);
         } finally { h.close(); }
     }
-    @Test public void existingServiceWorkspaceAndProviderDefaultArePreserved() {
+    @Test public void existingServiceWorkspaceAndProviderDefaultArePreservedEvenWithoutExpandingAdvanced() {
         Harness h = new Harness(CaptionConnection.basic(CaptionService.CLAUDE.defaultEndpoint, "synthetic-model", 1024,
                 ChatCompletionAdapter.Thinking.OMIT, CaptionService.CLAUDE, "fixture_workspace-1"));
         try {
             assertEquals(CaptionService.CLAUDE.ordinal(), h.spinner(R.id.caption_ai_service).getSelectedItemPosition());
             assertEquals(1, h.spinner(R.id.caption_ai_thinking).getSelectedItemPosition());
+            assertEquals(View.VISIBLE, h.dialog.findViewById(R.id.caption_ai_advanced_fields).getVisibility());
             assertEquals(View.VISIBLE, h.dialog.findViewById(R.id.caption_ai_workspace_fields).getVisibility());
             assertEquals("fixture_workspace-1", h.field(R.id.caption_ai_workspace).getText().toString());
             assertEquals("", h.key().getText().toString());
@@ -215,23 +273,13 @@ public class CaptionConnectionDialogTest {
             assertNull(h.connection.wire.workspaceId);
         } finally { h.close(); }
     }
-    @Test public void automaticPolicyHintTracksTheCurrentModelWithoutAHiddenDefaultModel() {
+    @Test public void presetAutoFillsDefaultEndpointAndClearsBackToEmptyWhenReturningToGenericMode() {
         Harness h = new Harness(false);
         try {
-            h.select(R.id.caption_ai_service, CaptionService.GEMINI.ordinal());
-            assertEquals(CaptionService.GEMINI.defaultEndpoint, h.field(R.id.caption_ai_endpoint).getText().toString());
-            assertEquals("", h.field(R.id.caption_ai_model).getText().toString());
-            assertEquals(h.activity.getString(R.string.caption_ai_policy_unknown), h.policy());
-            h.field(R.id.caption_ai_model).setText("gemini-2.5-pro");
-            assertEquals(h.activity.getString(R.string.caption_ai_policy_budget), h.policy());
-            h.field(R.id.caption_ai_model).setText("synthetic-unknown-model");
-            assertEquals(h.activity.getString(R.string.caption_ai_policy_unknown), h.policy());
-            h.select(R.id.caption_ai_thinking, 1);
-            assertEquals(h.activity.getString(R.string.caption_ai_policy_default), h.policy());
-            h.select(R.id.caption_ai_service, CaptionService.OPENAI_CHAT.ordinal());
-            assertEquals(CaptionService.OPENAI_CHAT.defaultEndpoint, h.field(R.id.caption_ai_endpoint).getText().toString());
-            assertEquals("synthetic-unknown-model", h.field(R.id.caption_ai_model).getText().toString());
-            assertEquals(0, h.spinner(R.id.caption_ai_thinking).getSelectedItemPosition());
+            h.select(R.id.caption_ai_service, CaptionService.DEEPSEEK.ordinal());
+            assertEquals(CaptionService.DEEPSEEK.defaultEndpoint, h.field(R.id.caption_ai_endpoint).getText().toString());
+            h.select(R.id.caption_ai_service, CaptionService.CUSTOM_CHAT.ordinal());
+            assertEquals("", h.field(R.id.caption_ai_endpoint).getText().toString());
         } finally { h.close(); }
     }
 
@@ -267,7 +315,6 @@ public class CaptionConnectionDialogTest {
         EditText field(int id) { return dialog.findViewById(id); }
         Spinner spinner(int id) { return dialog.findViewById(id); }
         void select(int id, int position) { spinner(id).setSelection(position); drain(); }
-        String policy() { return ((TextView) dialog.findViewById(R.id.caption_ai_thinking_policy)).getText().toString(); }
         EditText key() { return field(R.id.caption_ai_key); }
         void validFields() {
             field(R.id.caption_ai_endpoint).setText(ENDPOINT);

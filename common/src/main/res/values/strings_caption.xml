@@ -1,62 +1,71 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="caption_ai_channel">AI subtitles for this channel</string>
-    <string name="caption_ai_details">AI subtitle details</string>
+    <string name="caption_ai_channel">Bilingual subtitles for this channel</string>
     <string name="caption_ai_target">Target language</string>
     <string name="caption_ai_not_set">Not set</string>
-    <string name="caption_ai_display">Display mode</string>
-    <string name="caption_ai_original_first">Bilingual (original top)</string>
-    <string name="caption_ai_translation_first">Bilingual (translation top)</string>
+    <string name="caption_ai_lang_zh_hans">Simplified Chinese (简体中文)</string>
+    <string name="caption_ai_lang_zh_hant">Traditional Chinese (繁體中文)</string>
+    <string name="caption_ai_lang_en">English</string>
+    <string name="caption_ai_lang_ja">Japanese (日本語)</string>
+    <string name="caption_ai_lang_ko">Korean (한국어)</string>
+    <string name="caption_ai_lang_es">Spanish (Español)</string>
+    <string name="caption_ai_lang_fr">French (Français)</string>
+    <string name="caption_ai_lang_de">German (Deutsch)</string>
+    <string name="caption_ai_lang_ru">Russian (Русский)</string>
+    <string name="caption_ai_lang_custom">Custom language code…</string>
+    <string name="caption_ai_lang_custom_hint">e.g. pt-BR, it, ar</string>
+    <string name="caption_ai_display">Translation display</string>
+    <string name="caption_ai_original_first">Bilingual (original on top)</string>
+    <string name="caption_ai_translation_first">Bilingual (translation on top)</string>
     <string name="caption_ai_translation_only">Translation only</string>
-    <string name="caption_ai_connection">Model connection</string>
-    <string name="caption_ai_service">Provider / Protocol</string>
-    <string name="caption_ai_service_custom">Custom Chat Completions</string>
-    <string name="caption_ai_service_openai_chat">OpenAI · Chat Completions</string>
-    <string name="caption_ai_service_openai_responses">OpenAI · Responses</string>
-    <string name="caption_ai_service_deepseek">DeepSeek · Chat Completions</string>
-    <string name="caption_ai_service_claude">Claude · Messages</string>
-    <string name="caption_ai_service_gemini">Gemini · Native API</string>
-    <string name="caption_ai_endpoint">API Endpoint (HTTPS)</string>
+    <string name="caption_ai_connection">AI model settings</string>
+    <string name="caption_ai_service">API type / Quick preset</string>
+    <string name="caption_ai_service_custom">OpenAI-compatible (Generic)</string>
+    <string name="caption_ai_service_openai_chat">OpenAI</string>
+    <string name="caption_ai_service_openai_responses">OpenAI Responses</string>
+    <string name="caption_ai_service_deepseek">DeepSeek</string>
+    <string name="caption_ai_service_claude">Claude (Native)</string>
+    <string name="caption_ai_service_gemini">Gemini (Native)</string>
+    <string name="caption_ai_endpoint">API URL</string>
+    <string name="caption_ai_endpoint_hint">e.g. https://api.example.com/v1</string>
     <string name="caption_ai_gemini_endpoint_hint">Accepts /models base URL or full :generateContent URL</string>
     <string name="caption_ai_model">Model ID</string>
+    <string name="caption_ai_model_hint">e.g. deepseek-chat, gpt-4o-mini</string>
+    <string name="caption_ai_key_label">API Key</string>
+    <string name="caption_ai_key_hint">Enter API Key</string>
+    <string name="caption_ai_key_saved_label">API Key (saved, leave blank to keep)</string>
+    <string name="caption_ai_key_saved_hint">Leave blank to keep current Key</string>
+    <string name="caption_ai_advanced_collapsed">Advanced options ▸</string>
+    <string name="caption_ai_advanced_expanded">Advanced options ▾</string>
+    <string name="caption_ai_output_tokens">Max output tokens</string>
+    <string name="caption_ai_thinking">Reasoning / thinking control</string>
+    <string name="caption_ai_thinking_auto">Auto (off or low for known models)</string>
+    <string name="caption_ai_thinking_default">Omit parameter (compatible with all relays)</string>
+    <string name="caption_ai_deepseek_thinking">Force off (send thinking: disabled)</string>
     <string name="caption_ai_workspace">Workspace ID (optional)</string>
     <string name="caption_ai_workspace_hint">Leave blank to omit workspace header</string>
-    <string name="caption_ai_key_hint">API Key (leave blank to keep current)</string>
-    <string name="caption_ai_output_tokens">Max output tokens</string>
-    <string name="caption_ai_thinking">Thinking mode</string>
-    <string name="caption_ai_thinking_auto">Auto (off or low)</string>
-    <string name="caption_ai_thinking_default">Provider default</string>
-    <string name="caption_ai_deepseek_thinking">Force disabled (DeepSeek)</string>
-    <string name="caption_ai_policy_default">Policy: provider default</string>
-    <string name="caption_ai_policy_unknown">Policy: unknown model, no extra parameter</string>
-    <string name="caption_ai_policy_disabled">Policy: thinking disabled</string>
-    <string name="caption_ai_policy_low">Policy: low thinking effort</string>
-    <string name="caption_ai_policy_budget">Policy: 128-token thinking budget</string>
-    <string name="caption_ai_connection_notice">Changing provider or URL requires re-entering the Key</string>
+    <string name="caption_ai_connection_notice">Note: Changing API type, URL, or Workspace ID requires re-entering the Key</string>
     <string name="caption_ai_clear_key">Clear Key</string>
     <string name="caption_ai_clear_key_confirm">Clear the saved API Key?</string>
-    <string name="caption_ai_invalid_connection">Invalid settings. Check URL, model, token limit, and Key.</string>
-    <string name="caption_ai_invalid_language">Enter a valid language code (e.g. zh-Hans, en).</string>
-    <string name="caption_ai_loading">Loading…</string>
+    <string name="caption_ai_invalid_connection">Invalid settings. Check API URL, Model ID, and API Key.</string>
+    <string name="caption_ai_invalid_language">Invalid language code (e.g. zh-Hans, en, pt-BR).</string>
+    <string name="caption_ai_loading">Loading subtitle settings…</string>
     <string name="caption_ai_saving">Saving…</string>
-    <string name="caption_ai_saved">Saved</string>
-    <string name="caption_ai_editor_expired">Page expired. Reopen settings to try again.</string>
-    <string name="caption_ai_key_missing">No Key configured</string>
-    <string name="caption_ai_save_failed">Save failed. Please retry.</string>
-    <string name="caption_ai_pending_channel">Waiting for channel info…</string>
-    <string name="caption_ai_scope_hint">Global settings active (toggle saved per channel)</string>
-    <string name="caption_ai_not_configured">Configure target language and model connection first.</string>
-    <string name="caption_ai_key_saved">Key saved</string>
-    <string name="caption_ai_key_memory">Key saved in memory only</string>
-    <string name="caption_ai_retry">Retry save</string>
+    <string name="caption_ai_editor_expired">Settings expired. Reopen settings to try again.</string>
+    <string name="caption_ai_key_missing">Not configured</string>
+    <string name="caption_ai_save_failed">Save failed. Tap to retry.</string>
+    <string name="caption_ai_not_configured">Set target language and AI model settings first.</string>
+    <string name="caption_ai_key_saved">Ready (Key saved)</string>
+    <string name="caption_ai_key_memory">Ready (Key in memory only)</string>
     <item name="caption_ai_service" type="id" />
-    <item name="caption_ai_workspace" type="id" />
-    <item name="caption_ai_workspace_fields" type="id" />
-    <item name="caption_ai_thinking_policy" type="id" />
     <item name="caption_ai_endpoint" type="id" />
     <item name="caption_ai_model" type="id" />
     <item name="caption_ai_key" type="id" />
-    <item name="caption_ai_output_tokens" type="id" />
+    <item name="caption_ai_advanced_toggle" type="id" />
+    <item name="caption_ai_advanced_fields" type="id" />
     <item name="caption_ai_thinking" type="id" />
+    <item name="caption_ai_output_tokens" type="id" />
+    <item name="caption_ai_workspace_fields" type="id" />
+    <item name="caption_ai_workspace" type="id" />
     <item name="caption_ai_error" type="id" />
 </resources>

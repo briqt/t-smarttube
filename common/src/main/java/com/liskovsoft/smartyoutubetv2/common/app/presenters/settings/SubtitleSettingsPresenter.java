@@ -7,6 +7,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.base.BasePresenter;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.settings.CaptionSettingsController;
 import com.liskovsoft.smartyoutubetv2.common.utils.AppDialogUtil;
 import com.liskovsoft.youtubeapi.service.internal.MediaServiceData;
 
@@ -23,8 +24,28 @@ public class SubtitleSettingsPresenter extends BasePresenter<Void> {
     }
 
     public void show() {
+        CaptionSettingsController captions = getPlaybackPresenter().getController(CaptionSettingsController.class);
+        if (captions != null && !captions.isReady()) {
+            Class<?> originView = getViewManager().getTopView();
+            boolean wasDialogShown = AppDialogPresenter.instance(getContext()).isDialogShown();
+            captions.whenReady(() -> {
+                if (getViewManager().getTopView() != originView ||
+                        (!wasDialogShown && AppDialogPresenter.instance(getContext()).isDialogShown())) {
+                    return;
+                }
+                showInternal(captions);
+            });
+        } else {
+            showInternal(captions);
+        }
+    }
+
+    private void showInternal(CaptionSettingsController captions) {
         AppDialogPresenter settingsPresenter = AppDialogPresenter.instance(getContext());
 
+        if (captions != null) {
+            captions.appendGlobalSettings(settingsPresenter);
+        }
         settingsPresenter.appendSingleSwitch(AppDialogUtil.createSubtitleChannelOption(getContext()));
         // Can't work properly. There is no robust language detection.
         //appendSubtitleLanguageCategory(settingsPresenter);
@@ -33,7 +54,8 @@ public class SubtitleSettingsPresenter extends BasePresenter<Void> {
         appendSubtitleSizeCategory(settingsPresenter);
         appendSubtitlePositionCategory(settingsPresenter);
 
-        settingsPresenter.showDialog(getContext().getString(R.string.subtitle_category_title));
+        settingsPresenter.showDialog(getContext().getString(R.string.subtitle_category_title),
+                captions == null ? null : captions::onStandaloneClosed);
     }
 
     //private void appendSubtitleLanguageCategory(AppSettingsPresenter settingsPresenter) {
