@@ -15,7 +15,7 @@ import java.util.Map;
 
 /** Coordinator-owned bounded frozen data and completed Strings, never old document/request objects. */
 final class SemanticTranslationCache {
-    private static final int REQUEST_CONTRACT = 2; // Per-item context data/prompt contract.
+    private static final int REQUEST_CONTRACT = 3; // Batch-level context & marker protocol contract.
     private static final int MAPPING_CONTRACT = 2; // Primary source ranges, not later display echoes.
     private static final Charset UTF8 = Charset.forName("UTF-8");
 
@@ -106,8 +106,7 @@ final class SemanticTranslationCache {
         digest.string(profile.sourceLanguage);
         digest.string(profile.targetLanguage);
         digest.string(profile.context);
-        // Deliberately retain existing conservative resource-configuration namespaces in this step.
-        digest.number(profile.batchLimits.items);
+        // Deliberately omit batchLimits.items so changing batch size does not invalidate cached translations.
         digest.number(profile.batchLimits.sourceCodePoints);
         digest.number(profile.batchLimits.contextCodePoints);
         digest.number(profile.batchLimits.translatedCodePoints);

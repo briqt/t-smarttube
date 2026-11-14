@@ -99,14 +99,24 @@ public final class TranslationCoordinator {
         public final int maxAttempts;
         public final long retryDelayMs;
         public final int maxJobs;
+        public final int rampBatchSize;
+        public final int rampBatchCount;
 
         /** Explicit local budgets, not product defaults, token estimates, or a persistent cache. */
         public Limits(long lookAheadUs, int cacheEntries, int cacheCodePoints, long cacheTtlMs,
                       int maxAttempts, long retryDelayMs, int maxJobs) {
+            this(lookAheadUs, cacheEntries, cacheCodePoints, cacheTtlMs, maxAttempts, retryDelayMs, maxJobs, 0, 0);
+        }
+
+        /** Explicit budgets with optional cold-start / uncached-seek ramp before steady-state low-watermark prefetching. */
+        public Limits(long lookAheadUs, int cacheEntries, int cacheCodePoints, long cacheTtlMs,
+                      int maxAttempts, long retryDelayMs, int maxJobs, int rampBatchSize, int rampBatchCount) {
             if (lookAheadUs < 0 || lookAheadUs > 600_000_000L || cacheEntries <= 0 || cacheEntries > 8192 ||
                     cacheCodePoints <= 0 || cacheCodePoints > 1024 * 1024 || cacheTtlMs <= 0 || cacheTtlMs > 86_400_000L ||
                     maxAttempts <= 0 || maxAttempts > 8 || retryDelayMs <= 0 || retryDelayMs > 3_600_000L ||
-                    maxJobs <= 0 || maxJobs > 65536) throw invalid();
+                    maxJobs <= 0 || maxJobs > 65536 ||
+                    rampBatchSize < 0 || rampBatchSize > 64 || rampBatchCount < 0 || rampBatchCount > 16 ||
+                    (rampBatchCount > 0 && rampBatchSize == 0)) throw invalid();
             this.lookAheadUs = lookAheadUs;
             this.cacheEntries = cacheEntries;
             this.cacheCodePoints = cacheCodePoints;
@@ -114,6 +124,8 @@ public final class TranslationCoordinator {
             this.maxAttempts = maxAttempts;
             this.retryDelayMs = retryDelayMs;
             this.maxJobs = maxJobs;
+            this.rampBatchSize = rampBatchSize;
+            this.rampBatchCount = rampBatchCount;
         }
     }
 
@@ -163,17 +175,20 @@ public final class TranslationCoordinator {
         final Profile profile;
         final List<Integer> window;
         final long activation;
+        final int targetBatchItems;
         TranslationBatch batch;
         final Map<Integer, SemanticTranslationCache.Key> keys = new HashMap<>();
-        final Map<Integer, String> contexts = new HashMap<>();
         final List<Integer> selected = new ArrayList<>();
+        List<String> priorLines = Collections.emptyList();
+        String nextLine = "";
         Work work;
         boolean cancelled;
-        Ticket(CaptionSession.Snapshot snapshot, Profile profile, List<Integer> window, long activation) {
+        Ticket(CaptionSession.Snapshot snapshot, Profile profile, List<Integer> window, long activation, int targetBatchItems) {
             this.snapshot = snapshot;
             this.profile = profile;
             this.window = Collections.unmodifiableList(new ArrayList<>(window));
             this.activation = activation;
+            this.targetBatchItems = targetBatchItems;
         }
     }
 
@@ -202,6 +217,8 @@ public final class TranslationCoordinator {
     private long mNotBeforeMs;
     private long mRateLimitedUntilMs;
     private int mJobs;
+    private int mRampRemaining;
+    private boolean mPendingSeekReset;
     private boolean mRequesting;
     private boolean mVisible;
     private boolean mBlocked;
@@ -213,15 +230,13 @@ public final class TranslationCoordinator {
                 new ArrayBlockingQueue<>(1), runnable -> new Thread(runnable, "caption-translation"),
                 new ThreadPoolExecutor.AbortPolicy());
         ChatTranslationClient client = new ChatTranslationClient();
-        TranslationCoordinator coordinator = new TranslationCoordinator(session, clock, worker, (batch, profile) -> {
+        return new TranslationCoordinator(session, clock, worker, (batch, profile) -> {
             ChatTranslationClient.Job job = client.newJob(batch, profile.wire, profile.credentials, profile.maxCalls);
             return new Work() {
                 public ChatTranslationClient.Result execute() { return job.execute(); }
                 public void cancel() { job.cancel(); }
             };
         }, limits, worker);
-        coordinator.mBoundaryRefiner = new CaptionBoundaryRefiner(client.transport(), clock);
-        return coordinator;
     }
 
     void setBoundaryRefiner(CaptionBoundaryRefiner refiner) { mBoundaryRefiner = refiner; }
@@ -238,6 +253,7 @@ public final class TranslationCoordinator {
         mExecutor = executor;
         mFactory = factory;
         mLimits = limits;
+        mRampRemaining = limits.rampBatchCount;
         mCompleted = new SemanticTranslationCache(limits);
         mOwnedExecutor = ownedExecutor;
     }
@@ -258,6 +274,8 @@ public final class TranslationCoordinator {
             mProfile = profile;
             resetResultsLocked();
             mJobs = 0;
+            mRampRemaining = mLimits.rampBatchCount;
+            mPendingSeekReset = false;
             mRevision++;
         }
         cancel(cancel);
@@ -277,6 +295,8 @@ public final class TranslationCoordinator {
             mCompleted.clear();
             mBudgetSource = null;
             mJobs = 0;
+            mRampRemaining = mLimits.rampBatchCount;
+            mPendingSeekReset = false;
             mRevision++;
         }
         cancel(cancel);
@@ -314,6 +334,7 @@ public final class TranslationCoordinator {
             if (discontinuity) {
                 Work current = detachLocked();
                 if (current != null) cancel = current;
+                if (mLimits.rampBatchCount > 0) mPendingSeekReset = true;
             }
             if (discontinuity || positionUs != mPositionUs) mRevision++;
             mPositionUs = positionUs;
@@ -331,10 +352,16 @@ public final class TranslationCoordinator {
             long now = now();
             expireLocked(now);
             if (mProfile != null && mSnapshot != null && mSnapshot.groups.getGroups().size() <= MAX_GROUPS) updateWindowLocked();
+            if (mPendingSeekReset) {
+                mPendingSeekReset = false;
+                if (mLimits.rampBatchCount > 0 && contiguousHandledLocked() == 0) {
+                    mRampRemaining = mLimits.rampBatchCount;
+                }
+            }
             if (!mClosed && mRequesting && mProfile != null && mProfile.cacheScope.active() && mSnapshot != null &&
                     mSession.isCurrent(mSnapshot) && mRunning == null && mSnapshot.groups.getGroups().size() <= MAX_GROUPS &&
                     needsPreparationLocked(now)) {
-                ticket = new Ticket(mSnapshot, mProfile, mWindow, mSession.getActivationRevision());
+                ticket = new Ticket(mSnapshot, mProfile, mWindow, mSession.getActivationRevision(), desiredBatchItemsLocked(mProfile));
                 mRunning = ticket;
             }
         }
@@ -346,22 +373,62 @@ public final class TranslationCoordinator {
         }
     }
 
+    private int desiredBatchItemsLocked(Profile profile) {
+        if (mLimits.rampBatchCount > 0 && mRampRemaining > 0) {
+            return Math.min(mLimits.rampBatchSize, profile.batchLimits.items);
+        }
+        return profile.batchLimits.items;
+    }
+
+    private boolean isHandledLocked(int index) {
+        if (failuresLocked(index) >= mLimits.maxAttempts) return true;
+        SemanticTranslationCache.Key key = mKeys.get(index);
+        if (key == null) return false;
+        if (mCompleted.get(key) != null) return true;
+        return mProjectionProfile == mProfile && mResolvedWindow.equals(mWindow) &&
+                mCompleted.suppressed(key, mCacheWindow);
+    }
+
+    private int contiguousHandledLocked() {
+        int handled = 0;
+        for (Integer index : mWindow) {
+            if (!isHandledLocked(index)) break;
+            handled++;
+        }
+        return handled;
+    }
+
+    private boolean belowWatermarkLocked(int contiguousHandled) {
+        if (mLimits.rampBatchCount == 0 || mProfile == null) return true;
+        if (mRampRemaining > 0) {
+            int rampTarget = Math.min(mLimits.rampBatchSize, mProfile.batchLimits.items) * mLimits.rampBatchCount;
+            return contiguousHandled < Math.max(mProfile.batchLimits.items, rampTarget);
+        }
+        return contiguousHandled < mProfile.batchLimits.items;
+    }
+
     private boolean canRequestLocked(long now) {
         return !mBlocked && now >= mNotBeforeMs && now >= mRateLimitedUntilMs && mJobs < mLimits.maxJobs;
     }
 
     private boolean needsPreparationLocked(long now) {
         if (mWindow.isEmpty()) return false;
-        boolean allPaid = true;
-        for (Integer index : mWindow) {
-            if (mCompleted.get(mKeys.get(index)) == null) { allPaid = false; break; }
+        int contiguousHandled = contiguousHandledLocked();
+        if (contiguousHandled == mWindow.size()) return false;
+        boolean hasUnhandled = false;
+        for (int i = contiguousHandled; i < mWindow.size(); i++) {
+            if (!isHandledLocked(mWindow.get(i))) { hasUnhandled = true; break; }
         }
-        if (allPaid) return false; // A changed priority window alone cannot delay already reachable text.
+        if (!hasUnhandled) return false; // A changed priority window alone cannot delay already reachable text.
         if (!canRequestLocked(now)) {
             // Do not queue blind preparation while authentication/rate/call gates block requests.
             // A potentially reusable completed domain may still get one cache-only reassociation.
             return !mResolvedWindow.equals(mWindow) &&
                     mCompleted.hasCompletedDomain(mSnapshot.track.cacheScope, mProfile.cacheScope, mProfile.semantics);
+        }
+        if (mLimits.rampBatchCount > 0) {
+            if (mProjectionProfile != mProfile) return true;
+            return belowWatermarkLocked(contiguousHandled);
         }
         if (!mResolvedWindow.equals(mWindow)) return true;
         for (Integer index : mWindow) {
@@ -436,7 +503,7 @@ public final class TranslationCoordinator {
                     frozen = old.frozen;
                     key = old.key;
                     reuseUntil = old.expiresAtMs;
-                } else if (newContexts < ticket.profile.batchLimits.items) {
+                } else if (newContexts < ticket.targetBatchItems) {
                     frozen = document.prepare(index, localBudget);
                     key = SemanticTranslationCache.contextKey(group.base, frozen);
                     newContexts++;
@@ -448,7 +515,8 @@ public final class TranslationCoordinator {
             if (!guardTicket(ticket, () -> selectPreparedLocked(ticket, document, prepared, priorities, window, globalPoints))) return;
             if (ticket.selected.isEmpty()) { finishPreparation(ticket); return; }
             TranslationBatch batch = new TranslationBatch(ticket.snapshot.groups, ticket.selected, ticket.profile.sourceLanguage,
-                    ticket.profile.targetLanguage, ticket.profile.context, ticket.profile.batchLimits, ticket.contexts);
+                    ticket.profile.targetLanguage, ticket.profile.context, ticket.profile.batchLimits,
+                    ticket.priorLines, ticket.nextLine);
             batch = fitWire(ticket, batch);
             if (batch == null) { finishPreparation(ticket); return; }
             final TranslationBatch admitted = batch;
@@ -533,31 +601,70 @@ public final class TranslationCoordinator {
         long now = now();
         expireLocked(now);
         boolean request = canRequestLocked(now);
-        int sourcePoints = 0;
-        int contextPoints = globalPoints;
+        List<SemanticTranslationCache.Record> resolved = new ArrayList<>(prepared.size());
         for (Prepared item : prepared) {
             boolean fresh = now < item.reuseUntilMs;
             SemanticTranslationCache.Record record = mCompleted.resolve(document.groups[item.index].base,
                     fresh ? item.frozen : null, item.key, now, priorities, window, request && fresh && item.frozen != null);
-            if (record == null) { mKeys.remove(item.index); continue; }
-            mKeys.put(item.index, record.key);
-            if (!request || record.frozen == null || mCompleted.get(record.key) != null ||
-                    mCompleted.suppressed(record.key, window) || failuresLocked(item.index) >= mLimits.maxAttempts) continue;
-            int count = document.groups[item.index].codePoints;
-            if (count > ticket.profile.batchLimits.sourceCodePoints) { mCompleted.suppress(record.key, null, now); continue; }
-            int local = record.frozen.codePoints;
-            if (ticket.selected.size() >= ticket.profile.batchLimits.items ||
-                    count > ticket.profile.batchLimits.sourceCodePoints - sourcePoints ||
-                    local > ticket.profile.batchLimits.contextCodePoints - contextPoints) continue;
-            ticket.selected.add(item.index);
-            ticket.contexts.put(item.index, record.frozen.text);
-            ticket.keys.put(item.index, record.key);
-            sourcePoints += count;
-            contextPoints += local;
+            resolved.add(record);
+            if (record == null) mKeys.remove(item.index);
+            else mKeys.put(item.index, record.key);
         }
         mCacheWindow = window;
         mProjectionProfile = ticket.profile;
         mResolvedWindow = ticket.window;
+        if (mLimits.rampBatchCount > 0) {
+            int contiguous = contiguousHandledLocked();
+            if (!belowWatermarkLocked(contiguous)) {
+                mRampRemaining = 0;
+                request = false;
+            }
+        }
+        if (request) {
+            int sourcePoints = 0;
+            CaptionNeighborContext.Frozen firstFrozen = null;
+            for (int i = 0; i < prepared.size(); i++) {
+                Prepared item = prepared.get(i);
+                SemanticTranslationCache.Record record = resolved.get(i);
+                boolean alreadyCompleted = record != null && mCompleted.get(record.key) != null;
+                if (record == null || record.frozen == null || alreadyCompleted ||
+                        mCompleted.suppressed(record.key, window) || failuresLocked(item.index) >= mLimits.maxAttempts) {
+                    if (!ticket.selected.isEmpty()) break;
+                    continue;
+                }
+                int count = document.groups[item.index].codePoints;
+                if (count > ticket.profile.batchLimits.sourceCodePoints) {
+                    mCompleted.suppress(record.key, null, now);
+                    if (!ticket.selected.isEmpty()) break;
+                    continue;
+                }
+                if (ticket.selected.size() >= ticket.targetBatchItems ||
+                        count > ticket.profile.batchLimits.sourceCodePoints - sourcePoints) {
+                    break;
+                }
+                CaptionNeighborContext.Frozen nextFirst = firstFrozen == null ? record.frozen : firstFrozen;
+                List<String> candidatePrior = nextFirst.priorLines;
+                int candidatePriorPoints = nextFirst.priorCodePoints;
+                String candidateNext = record.frozen.nextLine;
+                int candidateNextPoints = record.frozen.nextCodePoints;
+                int budgetLeft = ticket.profile.batchLimits.contextCodePoints - globalPoints;
+                if (candidatePriorPoints + candidateNextPoints > budgetLeft) {
+                    if (!ticket.selected.isEmpty()) break;
+                    if (candidatePriorPoints <= budgetLeft) {
+                        candidateNext = "";
+                    } else {
+                        candidatePrior = Collections.emptyList();
+                        candidateNext = "";
+                    }
+                }
+                firstFrozen = nextFirst;
+                ticket.selected.add(item.index);
+                ticket.keys.put(item.index, record.key);
+                ticket.priorLines = candidatePrior;
+                ticket.nextLine = candidateNext;
+                sourcePoints += count;
+            }
+        }
         projectWindowKeysLocked();
         mRevision++;
     }
@@ -598,6 +705,7 @@ public final class TranslationCoordinator {
             }
         }
         boolean[] reached = {false};
+        boolean[] chainNext = {false};
         try {
             // Outer source/input guards, then credential state, coordinator, effective session.
             // All keys were prepared at admission. No parsing or transport takes place here.
@@ -606,6 +714,9 @@ public final class TranslationCoordinator {
                     synchronized (mSession) {
                         reached[0] = true;
                         finishCurrentLocked(ticket, result);
+                        chainNext[0] = mLimits.rampBatchCount > 0 && !mClosed && mRequesting &&
+                                result != null && result.status == ChatTranslationClient.Status.COMPLETE &&
+                                !result.translations.isEmpty();
                     }
                 }
             }));
@@ -616,6 +727,7 @@ public final class TranslationCoordinator {
                 }
             }
         }
+        if (chainNext[0]) pump();
     }
 
     /** Caller holds the complete admission chain through the validity check and String write. */
@@ -646,6 +758,9 @@ public final class TranslationCoordinator {
                 int failures = failuresLocked(item.groupIndex);
                 mFailures.put(item.groupIndex, terminal ? mLimits.maxAttempts : failures + 1);
             }
+        }
+        if (matched && !result.translations.isEmpty() && mRampRemaining > 0) {
+            mRampRemaining--;
         }
         if (!matched || result.status != ChatTranslationClient.Status.COMPLETE) {
             long delay = mLimits.retryDelayMs;
@@ -693,6 +808,10 @@ public final class TranslationCoordinator {
         if (next != null && next.track.cacheScope != mBudgetSource) {
             mBudgetSource = next.track.cacheScope;
             mJobs = 0;
+        }
+        if (!keepProjection) {
+            mRampRemaining = mLimits.rampBatchCount;
+            mPendingSeekReset = false;
         }
         boolean blocked = mBlocked;
         long notBefore = mNotBeforeMs;

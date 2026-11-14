@@ -263,22 +263,23 @@ public class CaptionNeighborContextProductionTest {
                             assertNotNull(chain.request().body());
                             chain.request().body().writeTo(bytes);
                             JSONObject body = BoundedJson.object(bytes.readUtf8());
-                            JSONObject input = userInput(body);
-                            String context = input.optString("context", "");
-                            JSONArray items = input.getJSONArray("items");
-                            JSONArray output = new JSONArray();
-                            for (int i = 0; i < items.length(); i++) {
-                                JSONObject item = items.getJSONObject(i);
-                                String source = item.getString("source");
-                                Object itemContext = item.has("context") ? item.get("context") : "";
-                                assertTrue("Optional item.context must be a string", itemContext instanceof String);
-                                String effectiveContext = context;
-                                if (!((String) itemContext).isEmpty()) effectiveContext += "\n" + (String) itemContext;
+                            ChatCompletionAdapterTest.ParsedRequest req = ChatCompletionAdapterTest.parseRequest(body);
+                            String baseContext = req.combinedContext();
+                            List<String> output = new ArrayList<>();
+                            for (int i = 0; i < req.sources.size(); i++) {
+                                String source = req.sources.get(i);
+                                StringBuilder effective = new StringBuilder(baseContext);
+                                for (int j = 0; j < req.sources.size(); j++) {
+                                    if (j == i) continue;
+                                    if (effective.length() > 0) effective.append('\n');
+                                    effective.append(req.sources.get(j));
+                                }
+                                String effectiveContext = effective.toString();
                                 String translated = answer(source, effectiveContext);
                                 receipts.add(new Receipt(source, effectiveContext, translated));
-                                output.put(new JSONObject().put("id", item.getString("id")).put("text", translated));
+                                output.add(translated);
                             }
-                            String content = new JSONObject().put("translations", output).toString();
+                            String content = ChatCompletionAdapterTest.markerReply(output);
                             String response = new JSONObject().put("choices", new JSONArray().put(new JSONObject()
                                     .put("finish_reason", "stop")
                                     .put("message", new JSONObject().put("content", content)))).toString();
@@ -410,20 +411,6 @@ public class CaptionNeighborContextProductionTest {
             if (decoder != null) decoder.release();
             observation.close();
         }
-    }
-
-    private static JSONObject userInput(JSONObject body) throws Exception {
-        JSONArray messages = body.getJSONArray("messages");
-        JSONObject found = null;
-        for (int i = 0; i < messages.length(); i++) {
-            JSONObject message = messages.getJSONObject(i);
-            if ("user".equals(message.getString("role"))) {
-                assertNull("One actual caption data message", found);
-                found = BoundedJson.object(message.getString("content"));
-            }
-        }
-        assertNotNull("The final request must contain caption data", found);
-        return found;
     }
 
     private static MediaSubtitle caption(String name, String id) {

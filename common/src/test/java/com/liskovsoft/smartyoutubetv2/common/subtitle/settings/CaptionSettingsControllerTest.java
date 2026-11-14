@@ -138,7 +138,7 @@ public class CaptionSettingsControllerTest {
             });
             awaitControllerIo(h);
             assertTrue(called[0]);
-            assertEquals("Standalone global settings expose target + connection buttons and display radio category", 2, presenter.buttons.size());
+            assertEquals("Standalone global settings expose target + batch + connection buttons and display radio category", 3, presenter.buttons.size());
             assertEquals(1, presenter.radioCategories.size());
             assertEquals(0, presenter.switches.size());
 
@@ -288,8 +288,150 @@ public class CaptionSettingsControllerTest {
     @Test public void targetEditorUsesTheNativeMenuActivityNotTheCoveredPlaybackActivity() throws Exception {
         assertEditorOwner(R.string.caption_ai_target);
     }
+    @Test public void batchSizeEditorUsesTheNativeMenuActivityNotTheCoveredPlaybackActivity() throws Exception {
+        assertEditorOwner(R.string.caption_ai_batch_size);
+    }
     @Test public void connectionEditorUsesTheNativeMenuActivityNotTheCoveredPlaybackActivity() throws Exception {
         assertEditorOwner(R.string.caption_ai_connection);
+    }
+    @Test public void customBatchSizeOptionValidatesTrimsAndPreselectsOnReopen() throws Exception {
+        ActivityController<Activity> menu = activity();
+        Harness h = new Harness(false);
+        h.context = menu.get();
+        MenuPresenter presenter = new MenuPresenter(menu.get());
+        try {
+            h.whenReady(() -> h.appendGlobalSettings(presenter));
+            awaitControllerIo(h);
+            OptionItem batchButton = presenter.buttons.stream()
+                    .filter(item -> item.getTitle().toString().startsWith(menu.get().getString(R.string.caption_ai_batch_size)))
+                    .findFirst().get();
+            String beforeTitle = batchButton.getTitle().toString();
+            for (String invalid : new String[]{"0", "33", "abc"}) {
+                batchButton.onSelect(true);
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+                AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
+                int customIndex = picker.getListView().getCount() - 1;
+                picker.getListView().performItemClick(picker.getListView().getAdapter().getView(customIndex, null, picker.getListView()), customIndex, customIndex);
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+
+                AlertDialog customDialog = (AlertDialog) ShadowDialog.getLatestDialog();
+                EditText input = customDialog.findViewById(R.id.simple_edit_value);
+                input.setText(invalid);
+                customDialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+                assertTrue("Invalid batch size " + invalid + " keeps custom dialog open", customDialog.isShowing());
+                assertEquals(beforeTitle, batchButton.getTitle().toString());
+                customDialog.dismiss();
+            }
+
+            batchButton.onSelect(true);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
+            int customIndex = picker.getListView().getCount() - 1;
+            picker.getListView().performItemClick(picker.getListView().getAdapter().getView(customIndex, null, picker.getListView()), customIndex, customIndex);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+
+            AlertDialog customDialog = (AlertDialog) ShadowDialog.getLatestDialog();
+            EditText input = customDialog.findViewById(R.id.simple_edit_value);
+            input.setText("  14  ");
+            customDialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+            awaitControllerIo(h);
+            assertFalse(customDialog.isShowing());
+            assertTrue(batchButton.getTitle().toString().contains("14"));
+
+            batchButton.onSelect(true);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            AlertDialog reopened = (AlertDialog) ShadowDialog.getLatestDialog();
+            assertEquals(customIndex, reopened.getListView().getCheckedItemPosition());
+            reopened.dismiss();
+        } finally {
+            h.onFinish();
+            menu.pause().stop().destroy();
+        }
+    }
+    @Test public void resolveVideoContextPrefersMetadataTitleWithVideoFallbackAndLatchesOncePerSource() throws Exception {
+        Video v = video("synthetic-ctx");
+        v.deArrowTitle = "DeArrow\t Title\nHere";
+        v.title = "Video Title";
+        v.author = "Video\u0007Author";
+        MediaItemMetadata meta = metadataWith("synthetic-ctx", "Meta Title", "Meta Author");
+        assertEquals("Title: DeArrow Title Here\nChannel: Video Author", CaptionSettingsController.resolveVideoContext(v, meta));
+        v.deArrowTitle = null;
+        assertEquals("Title: Meta Title\nChannel: Video Author", CaptionSettingsController.resolveVideoContext(v, meta));
+        v.author = null;
+        assertEquals("Title: Meta Title\nChannel: Meta Author", CaptionSettingsController.resolveVideoContext(v, meta));
+        assertEquals("Title: Video Title", CaptionSettingsController.resolveVideoContext(v, null));
+        v.title = null;
+        v.author = "Only Chan";
+        assertEquals("Channel: Only Chan", CaptionSettingsController.resolveVideoContext(v, null));
+        assertEquals("", CaptionSettingsController.resolveVideoContext(null, null));
+
+        ActivityController<Activity> playback = activity();
+        Harness h = new Harness();
+        h.context = playback.get();
+        CaptionOutputBridgeTest.AccountPlayback bridgeOwner = new CaptionOutputBridgeTest.AccountPlayback();
+        h.captionBridge = bridgeOwner.bridge;
+        CaptionPreferenceStore preferences = new CaptionPreferenceStore(playback.get(), "synthetic-ctx-latch", new CaptionPreferenceStore.Limits(32, 65536));
+        CaptionConnectionStore connection = new CaptionConnectionStore(playback.get(), "synthetic-ctx-latch");
+        try {
+            CaptionPreferenceStore.Snapshot prefSnap = preferences.updateGlobal(preferences.load(),
+                    new com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionPreferences.Global(
+                            "zh", com.liskovsoft.smartyoutubetv2.common.subtitle.presentation.NativeCueComposer.Mode.BILINGUAL,
+                            com.liskovsoft.smartyoutubetv2.common.subtitle.presentation.NativeCueComposer.Order.ORIGINAL_FIRST,
+                            CaptionConnection.PRIMARY, 8));
+            prefSnap = preferences.updateChannel(prefSnap, "synthetic-ch",
+                    new com.liskovsoft.smartyoutubetv2.common.subtitle.translation.CaptionPreferences.Channel(
+                            true, null, com.liskovsoft.smartyoutubetv2.common.subtitle.source.CaptionSource.TextKind.UNKNOWN));
+            CaptionConnectionStore.Snapshot connSnap = connection.save(connection.load(), CaptionConnection.basic(
+                    "https://synthetic.invalid/v1/chat/completions", "synthetic-model", 1024, ChatCompletionAdapter.Thinking.OMIT),
+                    CaptionConnectionStore.KeyEdit.REPLACE, "synthetic-ctx-key");
+            ReflectionHelpers.setField(h, "mPreferences", prefSnap);
+            ReflectionHelpers.setField(h, "mGlobal", prefSnap.preferences.global);
+            ReflectionHelpers.setField(h, "mConnection", connSnap);
+            h.onViewCreated();
+
+            Video first = video("synthetic-v1");
+            first.channelId = "synthetic-ch";
+            first.title = "First Title";
+            first.author = "Chan One";
+            h.onNewVideo(first);
+            h.onSourceChanged(first);
+            com.liskovsoft.smartyoutubetv2.common.subtitle.translation.TranslationCoordinator.Profile firstProfile =
+                    ReflectionHelpers.getField(bridgeOwner.bridge, "mTemplate");
+            assertNotNull(firstProfile);
+            assertEquals("Title: First Title\nChannel: Chan One", firstProfile.context);
+
+            // Same source receives later metadata update: latched context remains unchanged.
+            h.metadataUpdated(first, metadataWith("synthetic-v1", "Later Mutated Title", "Later Chan"));
+            assertSame(firstProfile, ReflectionHelpers.getField(bridgeOwner.bridge, "mTemplate"));
+
+            // New source resets latched video context.
+            Video second = video("synthetic-v2");
+            second.channelId = "synthetic-ch";
+            second.title = "Second Title";
+            second.author = "Chan Two";
+            h.onNewVideo(second);
+            h.onSourceChanged(second);
+            com.liskovsoft.smartyoutubetv2.common.subtitle.translation.TranslationCoordinator.Profile secondProfile =
+                    ReflectionHelpers.getField(bridgeOwner.bridge, "mTemplate");
+            assertNotNull(secondProfile);
+            assertEquals("Title: Second Title\nChannel: Chan Two", secondProfile.context);
+        } finally {
+            h.onFinish(); bridgeOwner.close(); preferences.close(); connection.close();
+            playback.pause().stop().destroy();
+        }
+    }
+    private static MediaItemMetadata metadataWith(String id, String title, String author) {
+        return (MediaItemMetadata) Proxy.newProxyInstance(MediaItemMetadata.class.getClassLoader(), new Class<?>[]{MediaItemMetadata.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("getVideoId")) return id;
+                    if (method.getName().equals("getTitle")) return title;
+                    if (method.getName().equals("getAuthor")) return author;
+                    if (method.getReturnType() == boolean.class) return false;
+                    if (method.getReturnType() == int.class) return 0;
+                    if (method.getReturnType() == long.class) return 0L;
+                    return null;
+                });
     }
     @Test public void flattenedPlayerMenuShowsFourCleanControlsAndModelSummaryWithoutExposingTheKey() throws Exception {
         ActivityController<Activity> playback = activity(), menu = activity();
@@ -307,7 +449,7 @@ public class CaptionSettingsControllerTest {
             h.appendMenu(presenter);
             assertEquals("Exactly 1 channel switch", 1, presenter.switches.size());
             assertEquals("Exactly 1 display radio category", 1, presenter.radioCategories.size());
-            assertEquals("Exactly 2 global action rows (target language + model settings), no status/retry clutter", 2, presenter.buttons.size());
+            assertEquals("Exactly 3 global action rows (target language + batch size + model settings), no status/retry clutter", 3, presenter.buttons.size());
 
             OptionItem row = presenter.buttons.stream().filter(item -> item.getTitle().toString().startsWith(menu.get().getString(R.string.caption_ai_connection))).findFirst().get();
             assertTrue("Native singleButton only renders its title", row.getTitle().toString().contains(menu.get().getString(R.string.caption_ai_key_missing)));

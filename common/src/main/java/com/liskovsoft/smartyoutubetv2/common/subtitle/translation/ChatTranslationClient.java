@@ -131,14 +131,26 @@ public final class ChatTranslationClient {
                 if (decoded.state == ChatCompletionAdapter.State.COMPLETE) continue;
                 if (decoded.state == ChatCompletionAdapter.State.REFUSED || decoded.state == ChatCompletionAdapter.State.FILTERED ||
                         decoded.state == ChatCompletionAdapter.State.FAILED || decoded.state == ChatCompletionAdapter.State.UNKNOWN) break;
-                List<TranslationBatch.Item> missing = new ArrayList<>();
+                List<List<TranslationBatch.Item>> runs = new ArrayList<>();
+                List<TranslationBatch.Item> currentRun = null;
                 for (TranslationBatch.Item item : batch.getItems()) {
-                    if (!decoded.translations.containsKey(item.id)) missing.add(item);
+                    if (!decoded.translations.containsKey(item.id)) {
+                        if (currentRun == null) {
+                            currentRun = new ArrayList<>();
+                            runs.add(currentRun);
+                        }
+                        currentRun.add(item);
+                    } else {
+                        currentRun = null;
+                    }
                 }
-                // Splitting mitigates truncation/protocol failure. A singleton can retry only within the call budget.
-                int middle = (missing.size() + 1) / 2;
-                if (middle < missing.size()) pending.addFirst(batch.subset(missing.subList(middle, missing.size())));
-                if (middle > 0) pending.addFirst(batch.subset(missing.subList(0, middle)));
+                // Split contiguous missing runs to mitigate truncation without packing across translated gaps.
+                for (int r = runs.size() - 1; r >= 0; r--) {
+                    List<TranslationBatch.Item> run = runs.get(r);
+                    int middle = (run.size() + 1) / 2;
+                    if (middle < run.size()) pending.addFirst(batch.subset(run.subList(middle, run.size())));
+                    if (middle > 0) pending.addFirst(batch.subset(run.subList(0, middle)));
+                }
             }
             synchronized (this) {
                 if (mCancelled) {

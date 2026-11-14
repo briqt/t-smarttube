@@ -59,7 +59,7 @@ public final class CaptionOutputBridge {
         };
         // Development budgets until real UI/provider performance is accepted; no persisted product defaults.
         TranslationCoordinator coordinator = TranslationCoordinator.create(observation.getInputSession().getSession(),
-                SystemClock::elapsedRealtime, new TranslationCoordinator.Limits(30_000_000, 256, 65536, 3_600_000, 2, 1000, 4096));
+                SystemClock::elapsedRealtime, new TranslationCoordinator.Limits(300_000_000L, 512, 131072, 3_600_000L, 2, 1000L, 4096, 4, 3));
         return new CaptionOutputBridge(observation, coordinator, output, position, ui);
     }
 

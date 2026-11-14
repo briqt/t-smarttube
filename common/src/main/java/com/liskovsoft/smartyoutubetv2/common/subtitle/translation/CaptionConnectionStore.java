@@ -22,6 +22,10 @@ public final class CaptionConnectionStore {
         private final State mState;
         private TranslationCoordinator.Profile mProfile;
         private String mTarget;
+        private TranslationCoordinator.Profile mContextualProfile;
+        private String mContextualTarget;
+        private String mContextualVideoContext;
+        private int mContextualBatchSize;
         private Snapshot(CaptionConnectionStore owner, State state, boolean valid) {
             mOwner = owner;
             mState = state;
@@ -41,6 +45,28 @@ public final class CaptionConnectionStore {
                         targetLanguage, "", connection.batch, connection.maxCalls);
             }
             return mProfile;
+        }
+
+        /** Pure in-memory resolution with latched video context and global batch size. */
+        public synchronized TranslationCoordinator.Profile profile(String targetLanguage, String context, int batchSize) {
+            if (!valid || connection == null || !hasKey || mState.credential.getKey() == null || !TranslationBatch.language(targetLanguage)) return null;
+            if (!CaptionPreferences.Global.validBatchSize(batchSize)) throw CaptionPreferences.invalid();
+            String normalizedContext = context == null ? "" : context;
+            if (mContextualProfile == null || !targetLanguage.equals(mContextualTarget)
+                    || !normalizedContext.equals(mContextualVideoContext) || batchSize != mContextualBatchSize) {
+                TranslationBatch.Limits base = connection.batch;
+                TranslationBatch.Limits limits = new TranslationBatch.Limits(
+                        batchSize,
+                        Math.max(base.sourceCodePoints, 16000),
+                        Math.max(base.contextCodePoints, 4000),
+                        Math.max(base.translatedCodePoints, 24000));
+                mContextualTarget = targetLanguage;
+                mContextualVideoContext = normalizedContext;
+                mContextualBatchSize = batchSize;
+                mContextualProfile = new TranslationCoordinator.Profile(connection.wire, mState.credential, revision, null,
+                        targetLanguage, normalizedContext, limits, connection.maxCalls);
+            }
+            return mContextualProfile;
         }
     }
 

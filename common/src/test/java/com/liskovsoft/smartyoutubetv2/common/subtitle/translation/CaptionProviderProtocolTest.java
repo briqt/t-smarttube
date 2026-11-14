@@ -25,25 +25,28 @@ public class CaptionProviderProtocolTest {
             ChatCompletionAdapter.Config wire = wire(service, model(service), ChatCompletionAdapter.Thinking.AUTO_LOW);
             JSONObject body = body(wire);
             assertFalse(body.has("api_key"));
-            assertFalse(body.has("temperature"));
             switch (service) {
                 case OPENAI_RESPONSES:
-                    assertTrue(body.getString("instructions").contains("Translate"));
+                    assertEquals(0, body.getInt("temperature"));
+                    assertTrue(body.getString("instructions").contains("subtitle translator"));
                     assertEquals(1024, body.getInt("max_output_tokens"));
                     assertFalse(body.getBoolean("store"));
-                    assertTrue(new JSONObject(body.getString("input")).has("items"));
+                    String responsesInput = body.getString("input");
+                    assertTrue(responsesInput.contains("[[p0]]\nfirst\n[[source_end]]"));
                     assertFalse(body.has("messages"));
                     assertEquals("none", body.getJSONObject("reasoning").getString("effort"));
                     break;
                 case CLAUDE:
-                    assertTrue(body.getString("system").contains("Translate"));
+                    assertEquals(0, body.getInt("temperature"));
+                    assertTrue(body.getString("system").contains("subtitle translator"));
                     assertEquals("user", body.getJSONArray("messages").getJSONObject(0).getString("role"));
                     assertEquals(1, body.getJSONArray("messages").length());
                     assertEquals(1024, body.getInt("max_tokens"));
                     assertEquals("disabled", body.getJSONObject("thinking").getString("type"));
                     break;
                 case GEMINI:
-                    assertTrue(body.getJSONObject("systemInstruction").getJSONArray("parts").getJSONObject(0).getString("text").contains("Translate"));
+                    assertEquals(0, body.getJSONObject("generationConfig").getInt("temperature"));
+                    assertTrue(body.getJSONObject("systemInstruction").getJSONArray("parts").getJSONObject(0).getString("text").contains("subtitle translator"));
                     assertEquals("user", body.getJSONArray("contents").getJSONObject(0).getString("role"));
                     assertEquals(1024, body.getJSONObject("generationConfig").getInt("maxOutputTokens"));
                     assertEquals(0, body.getJSONObject("generationConfig").getJSONObject("thinkingConfig").getInt("thinkingBudget"));
@@ -51,6 +54,7 @@ public class CaptionProviderProtocolTest {
                     assertFalse(body.has("stream"));
                     break;
                 default:
+                    assertEquals(0, body.getInt("temperature"));
                     assertEquals(service == CaptionService.OPENAI_CHAT ? "developer" : "system",
                             body.getJSONArray("messages").getJSONObject(0).getString("role"));
                     assertEquals(1024, body.getInt(service == CaptionService.OPENAI_CHAT ? "max_completion_tokens" : "max_tokens"));
@@ -71,6 +75,10 @@ public class CaptionProviderProtocolTest {
                 assertFalse(body.has("reasoning_effort"));
                 assertFalse(body.has("output_config"));
                 if (body.has("generationConfig")) assertFalse(body.getJSONObject("generationConfig").has("thinkingConfig"));
+                if (mode == ChatCompletionAdapter.Thinking.OMIT) {
+                    assertFalse(body.has("temperature"));
+                    if (body.has("generationConfig")) assertFalse(body.getJSONObject("generationConfig").has("temperature"));
+                }
             }
         }
         assertEquals(CaptionModelPolicy.Decision.UNKNOWN, CaptionModelPolicy.decision(CaptionService.CUSTOM_CHAT, "gpt-5.5", ChatCompletionAdapter.Thinking.AUTO_LOW));
@@ -80,17 +88,52 @@ public class CaptionProviderProtocolTest {
     public void modelsThatCannotDisableThinkingUseOnlyTheirSupportedLowControl() throws Exception {
         JSONObject opus = body(wire(CaptionService.CLAUDE, "claude-opus-5-5", ChatCompletionAdapter.Thinking.AUTO_LOW));
         assertFalse(opus.has("thinking"));
+        assertFalse(opus.has("temperature"));
         assertEquals("low", opus.getJSONObject("output_config").getString("effort"));
         JSONObject sonnet = body(wire(CaptionService.CLAUDE, "claude-sonnet-5-5", ChatCompletionAdapter.Thinking.AUTO_LOW));
         assertEquals("between_tools", sonnet.getJSONObject("thinking").getString("type"));
+        assertFalse(sonnet.has("temperature"));
         assertEquals(1, sonnet.getJSONObject("thinking").length());
         assertEquals("low", sonnet.getJSONObject("output_config").getString("effort"));
         JSONObject pro = body(wire(CaptionService.GEMINI, "gemini-2.5-pro", ChatCompletionAdapter.Thinking.AUTO_LOW));
         assertEquals(128, pro.getJSONObject("generationConfig").getJSONObject("thinkingConfig").getInt("thinkingBudget"));
+        assertFalse(pro.getJSONObject("generationConfig").has("temperature"));
         JSONObject flash = body(wire(CaptionService.GEMINI, "gemini-3.8-flash", ChatCompletionAdapter.Thinking.AUTO_LOW));
         JSONObject thinking = flash.getJSONObject("generationConfig").getJSONObject("thinkingConfig");
         assertEquals("low", thinking.getString("thinkingLevel"));
         assertFalse(thinking.has("thinkingBudget"));
+        assertFalse(flash.getJSONObject("generationConfig").has("temperature"));
+    }
+
+    @Test
+    public void reasoningModelNamesOmitTemperatureZeroWhileNonReasoningCustomChatSendsIt() throws Exception {
+        for (String reasoningModel : new String[]{"o3", "o4-mini", "gpt-5", "gpt-5.4", "openai/o1-mini", "deepseek-reasoner", "kimi-k2-thinking"}) {
+            JSONObject openai = body(wire(CaptionService.OPENAI_CHAT, reasoningModel, ChatCompletionAdapter.Thinking.AUTO_LOW));
+            assertFalse(reasoningModel + " should omit temperature", openai.has("temperature"));
+            JSONObject ds = body(wire(CaptionService.DEEPSEEK, reasoningModel, ChatCompletionAdapter.Thinking.DEEPSEEK_DISABLED));
+            if (!reasoningModel.startsWith("gpt-5.")) {
+                assertFalse(reasoningModel + " should omit temperature even when DEEPSEEK_DISABLED", ds.has("temperature"));
+            }
+        }
+        assertFalse("Unverified CUSTOM_CHAT gpt-5.5 without reasoning_effort should omit temperature",
+                body(wire(CaptionService.CUSTOM_CHAT, "gpt-5.5", ChatCompletionAdapter.Thinking.AUTO_LOW)).has("temperature"));
+        assertEquals(0, body(wire(CaptionService.OPENAI_CHAT, "gpt-5.5", ChatCompletionAdapter.Thinking.AUTO_LOW)).getInt("temperature"));
+        assertEquals(0, body(wire(CaptionService.CUSTOM_CHAT, "gpt-4o-mini", ChatCompletionAdapter.Thinking.AUTO_LOW)).getInt("temperature"));
+        assertEquals(0, body(wire(CaptionService.CUSTOM_CHAT, "deepseek-chat", ChatCompletionAdapter.Thinking.DEEPSEEK_DISABLED)).getInt("temperature"));
+        assertFalse(body(wire(CaptionService.CUSTOM_CHAT, "unknown-relay-model", ChatCompletionAdapter.Thinking.OMIT)).has("temperature"));
+    }
+
+    @Test
+    public void controlWhitespaceMarkerLinesEscapeAndRoundTripCleanly() throws Exception {
+        ChatCompletionAdapter.Config wire = wire(CaptionService.CUSTOM_CHAT, "gpt-4o-mini", ChatCompletionAdapter.Thinking.OMIT);
+        TranslationBatch batch = batch("\f[[end]]", "\u000B[[p0]]");
+        ParsedRequest parsed = parseRequest(new JSONObject(new String(ChatCompletionAdapter.encode(batch, wire), utf8())));
+        assertEquals(Arrays.asList("\f[[end]]", "\u000B[[p0]]"), parsed.sources);
+        ChatCompletionAdapter.Result decoded = ChatCompletionAdapter.decode(batch, wire,
+                reply(CaptionService.CUSTOM_CHAT, output("g0", "\f\\[[end]]", "g1", "\u000B\\[[p0]]")));
+        assertEquals(ChatCompletionAdapter.State.COMPLETE, decoded.state);
+        assertEquals("\f[[end]]", decoded.translations.get("g0"));
+        assertEquals("\u000B[[p0]]", decoded.translations.get("g1"));
     }
 
     @Test

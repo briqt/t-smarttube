@@ -13,10 +13,12 @@ import java.util.Map;
 /** Caption-only, worker-side neighbor preparation. No retained document, provider, or network state. */
 final class CaptionNeighborContext {
     static final int MAX_GROUPS = 8192;
-    static final int LOCAL_CODE_POINTS = 512;
+    static final int LOCAL_CODE_POINTS = 1024;
     static final int DEPENDENCIES = 4;
-    private static final long GAP_US = 15_000_000;
-    private static final int CONTRACT = 1;
+    private static final int PRIOR_LIMIT = 3;
+    private static final long PRIOR_GAP_US = 20_000_000L;
+    private static final long NEXT_GAP_US = 15_000_000L;
+    private static final int CONTRACT = 2;
 
     static final class Signature {
         final byte[] bytes;
@@ -45,23 +47,35 @@ final class CaptionNeighborContext {
 
     /** Retain only limited text, fixed signatures and scalars; never Group/Document/Snapshot/Profile. */
     static final class Frozen {
-        final String text;
+        final List<String> priorLines;
+        final String nextLine;
         final Signature target;
         final List<Dependency> dependencies;
         final byte[] fingerprint;
         final int codePoints;
+        final int priorCodePoints;
+        final int nextCodePoints;
         final boolean associationCertain;
-        Frozen(String text, Signature target, List<Dependency> dependencies, boolean associationCertain) {
-            this.text = text;
+        Frozen(List<String> priorLines, String nextLine, Signature target, List<Dependency> dependencies, boolean associationCertain) {
+            this.priorLines = Collections.unmodifiableList(new ArrayList<>(priorLines));
+            this.nextLine = nextLine == null ? "" : nextLine;
+            int priorPoints = 0;
+            for (String line : this.priorLines) {
+                priorPoints += line.codePointCount(0, line.length());
+            }
             this.target = target;
             this.dependencies = Collections.unmodifiableList(new ArrayList<>(dependencies));
             this.associationCertain = associationCertain;
-            codePoints = text.codePointCount(0, text.length());
+            this.priorCodePoints = priorPoints;
+            this.nextCodePoints = this.nextLine.codePointCount(0, this.nextLine.length());
+            this.codePoints = this.priorCodePoints + this.nextCodePoints;
             SemanticTranslationCache.Digest digest = new SemanticTranslationCache.Digest();
             digest.number(CONTRACT);
             // Cost identity is the actual local data, not the association/omission dependencies.
             // A changed omitted neighbor may require re-preparation without changing paid semantics.
-            digest.string(text);
+            digest.number(this.priorLines.size());
+            for (String line : this.priorLines) digest.string(line);
+            digest.string(this.nextLine);
             fingerprint = digest.finish();
         }
         int dependencyBytes() { return dependencies.size() * 64; } // Two SHA-256 values per dependency.
@@ -144,33 +158,42 @@ final class CaptionNeighborContext {
             Group target = groups[index];
             int budget = Math.min(LOCAL_CODE_POINTS, Math.max(0, localBudget));
             List<Dependency> dependencies = new ArrayList<>();
-            StringBuilder context = new StringBuilder();
+            List<String> priorReversed = new ArrayList<>(PRIOR_LIMIT);
+            String nextLine = "";
             int used = 0;
             boolean certain = slots.get(target.slot) == target;
             if (budget > 0 && target.endUs > target.startUs) {
-                // Nearest before/after first, independent of peers, batch size, loading and cache hits.
-                for (int distance = 1; distance <= 2; distance++) {
-                    for (int direction : new int[]{-1, 1}) {
-                        int at = target.position + distance * direction;
-                        if (at < 0 || at >= ordered.size()) continue;
-                        Group neighbor = ordered.get(at);
-                        Group left = direction < 0 ? neighbor : target;
-                        Group right = direction < 0 ? target : neighbor;
-                        if (right.startUs > saturatedAdd(left.endUs, GAP_US)) continue;
-                        String label = direction < 0 ? "[nearby-before; continuity unknown]\n" :
-                                "[nearby-after; continuity unknown]\n";
-                        int points = label.length() + neighbor.text.codePointCount(0, neighbor.text.length()) + 1;
+                Group cursor = target;
+                for (int step = 0, pos = target.position - 1; step < PRIOR_LIMIT && pos >= 0; step++, pos--) {
+                    Group prior = ordered.get(pos);
+                    if (cursor.startUs > saturatedAdd(prior.endUs, PRIOR_GAP_US)) break;
+                    int points = prior.text.codePointCount(0, prior.text.length());
+                    boolean sent = points <= budget - used;
+                    dependencies.add(new Dependency(prior, sent)); // Omitted but observed also invalidates on revision.
+                    certain &= slots.get(prior.slot) == prior;
+                    if (sent) {
+                        priorReversed.add(prior.text);
+                        used += points;
+                    }
+                    cursor = prior;
+                }
+                int nextPos = target.position + 1;
+                if (nextPos < ordered.size()) {
+                    Group next = ordered.get(nextPos);
+                    if (next.startUs <= saturatedAdd(target.endUs, NEXT_GAP_US)) {
+                        int points = next.text.codePointCount(0, next.text.length());
                         boolean sent = points <= budget - used;
-                        dependencies.add(new Dependency(neighbor, sent)); // Omitted but observed also invalidates on revision.
-                        certain &= slots.get(neighbor.slot) == neighbor;
+                        dependencies.add(new Dependency(next, sent));
+                        certain &= slots.get(next.slot) == next;
                         if (sent) {
-                            context.append(label).append(neighbor.text).append('\n');
+                            nextLine = next.text;
                             used += points;
                         }
                     }
                 }
             }
-            return new Frozen(context.toString(), target.slot, dependencies, certain);
+            Collections.reverse(priorReversed);
+            return new Frozen(priorReversed, nextLine, target.slot, dependencies, certain);
         }
     }
 

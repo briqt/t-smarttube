@@ -139,39 +139,37 @@ public class CaptionContextAmbiguousSlotTest {
                     .addInterceptor(chain -> {
                         try {
                             assertNotNull(executing);
-                            Map<String, Integer> submitted = new HashMap<>();
-                            for (TranslationBatch.Item item : executing.getItems()) submitted.put(item.id, item.groupIndex);
+                            List<TranslationBatch.Item> submitted = executing.getItems();
                             Buffer bytes = new Buffer();
                             chain.request().body().writeTo(bytes);
                             JSONObject body = BoundedJson.object(bytes.readUtf8());
-                            JSONObject input = BoundedJson.object(body.getJSONArray("messages").getJSONObject(1).getString("content"));
-                            JSONArray items = input.getJSONArray("items");
-                            assertTrue(items.length() > 0 && items.length() <= maxItems);
-                            assertEquals(submitted.size(), items.length());
-                            String global = input.getString("context");
-                            long contextPoints = global.codePointCount(0, global.length());
+                            ChatCompletionAdapterTest.ParsedRequest req = ChatCompletionAdapterTest.parseRequest(body);
+                            assertTrue(!req.sources.isEmpty() && req.sources.size() <= maxItems);
+                            assertEquals(submitted.size(), req.sources.size());
+                            long contextPoints = req.videoContext.codePointCount(0, req.videoContext.length())
+                                    + req.nextLine.codePointCount(0, req.nextLine.length());
+                            for (String line : req.priorLines) {
+                                contextPoints += line.codePointCount(0, line.length());
+                            }
+                            String batchContext = req.combinedContext();
                             Set<String> seen = new HashSet<>();
                             List<Receipt> packet = new ArrayList<>();
-                            JSONArray output = new JSONArray();
-                            for (int i = 0; i < items.length(); i++) {
-                                JSONObject item = items.getJSONObject(i);
-                                String id = item.getString("id");
-                                assertTrue("Only actual submitted IDs may be answered", submitted.containsKey(id));
-                                assertTrue("Independent occurrences must not share a wire ID", seen.add(id));
-                                String local = item.getString("context");
-                                contextPoints += local.codePointCount(0, local.length());
-                                // The fake service has only this actual item's wire data, not the document
-                                // or peers. The suffix makes a wrong-context completed value observable.
-                                String translation = "translated " + item.getString("source") + " [" +
-                                        Integer.toHexString((global + "\n" + local).hashCode()) + "]";
-                                int group = submitted.get(id);
-                                packet.add(new Receipt(group, translation));
-                                replies.put(group, translation);
-                                output.put(new JSONObject().put("id", id).put("text", translation));
+                            List<String> output = new ArrayList<>();
+                            for (int i = 0; i < submitted.size(); i++) {
+                                TranslationBatch.Item item = submitted.get(i);
+                                assertTrue("Independent occurrences must not share a wire ID", seen.add(item.id));
+                                assertEquals(item.source, req.sources.get(i));
+                                // The fake service has only wire data, not the document.
+                                // The suffix makes a wrong-context completed value observable.
+                                String translation = "translated " + req.sources.get(i) + " [" +
+                                        Integer.toHexString(batchContext.hashCode()) + "]";
+                                packet.add(new Receipt(item.groupIndex, translation));
+                                replies.put(item.groupIndex, translation);
+                                output.add(translation);
                             }
-                            assertTrue("Global plus every local context must fit the real request budget", contextPoints <= contextBudget);
+                            assertTrue("Video plus prior and next context must fit the real request budget", contextPoints <= contextBudget);
                             packets.add(packet);
-                            String content = new JSONObject().put("translations", output).toString();
+                            String content = ChatCompletionAdapterTest.markerReply(output);
                             String envelope = new JSONObject().put("choices", new JSONArray().put(new JSONObject()
                                     .put("finish_reason", "stop").put("message", new JSONObject().put("content", content)))).toString();
                             return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)

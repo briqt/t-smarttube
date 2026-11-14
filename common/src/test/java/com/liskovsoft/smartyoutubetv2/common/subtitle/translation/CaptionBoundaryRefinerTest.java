@@ -163,40 +163,46 @@ public class CaptionBoundaryRefinerTest {
                 try {
                     Buffer buffer = new Buffer(); chain.request().body().writeTo(buffer);
                     JSONObject body = BoundedJson.object(buffer.readUtf8());
-                    JSONObject input = BoundedJson.object(body.getJSONArray("messages").getJSONObject(1).getString("content"));
+                    String userContent = body.getJSONArray("messages").getJSONObject(1).getString("content");
                     int code = 200;
                     String completion = "stop";
-                    JSONObject content;
-                    if (input.has("pieces")) {
-                        boundaries++;
-                        assertEquals(512, body.getInt("max_tokens"));
-                        JSONArray pieces = input.getJSONArray("pieces");
-                        if (!longUnit) assertEquals(9, pieces.length());
-                        StringBuilder sourceText = new StringBuilder();
-                        for (int i = 0; i < pieces.length(); i++) sourceText.append(pieces.getJSONObject(i).getString("text"));
-                        assertEquals(canonical, sourceText.toString());
-                        JSONArray ends = longUnit ? new JSONArray().put(pieces.getJSONObject(pieces.length() - 1).getString("id")) :
-                                new JSONArray().put("p1").put("p5").put("p8");
-                        content = new JSONObject().put("boundaries", ends);
-                        code = boundaryCode; completion = finish;
-                        Runnable callback = beforeReply; beforeReply = null;
-                        if (callback != null) callback.run();
+                    String replyContent;
+                    if (userContent.trim().startsWith("{")) {
+                        JSONObject input = BoundedJson.object(userContent);
+                        if (input.has("pieces")) {
+                            boundaries++;
+                            assertEquals(512, body.getInt("max_tokens"));
+                            JSONArray pieces = input.getJSONArray("pieces");
+                            if (!longUnit) assertEquals(9, pieces.length());
+                            StringBuilder sourceText = new StringBuilder();
+                            for (int i = 0; i < pieces.length(); i++) sourceText.append(pieces.getJSONObject(i).getString("text"));
+                            assertEquals(canonical, sourceText.toString());
+                            JSONArray ends = longUnit ? new JSONArray().put(pieces.getJSONObject(pieces.length() - 1).getString("id")) :
+                                    new JSONArray().put("p1").put("p5").put("p8");
+                            replyContent = new JSONObject().put("boundaries", ends).toString();
+                            code = boundaryCode; completion = finish;
+                            Runnable callback = beforeReply; beforeReply = null;
+                            if (callback != null) callback.run();
+                        } else {
+                            throw new AssertionError("Unexpected JSON message");
+                        }
                     } else {
                         translations++;
-                        JSONArray items = input.getJSONArray("items"), out = new JSONArray();
-                        for (int i = 0; i < items.length(); i++) {
-                            JSONObject item = items.getJSONObject(i);
-                            String text = item.getString("source"); sent.add(text);
+                        StringBuilder out = new StringBuilder();
+                        List<String> sources = parseMarkerItems(userContent);
+                        for (int i = 0; i < sources.size(); i++) {
+                            String text = sources.get(i); sent.add(text);
                             assertTrue("Strict source dictionary", longUnit ? deterministicSources.contains(text) :
                                     "old\n".equals(text) || "new line\n".equals(text) || "last line".equals(text) || CANONICAL.equals(text));
                             String translated = "old\n".equals(text) ? "旧行" : "new line\n".equals(text) ? "新行" :
                                     "last line".equals(text) ? "末行" : "整句";
-                            out.put(new JSONObject().put("id", item.getString("id")).put("text", translated));
+                            out.append("[[p").append(i).append("]]\n").append(translated).append('\n');
                         }
-                        content = new JSONObject().put("translations", out);
+                        out.append("[[end]]");
+                        replyContent = out.toString();
                     }
                     String envelope = new JSONObject().put("choices", new JSONArray().put(new JSONObject().put("finish_reason", completion)
-                            .put("message", new JSONObject().put("content", content.toString())))).toString();
+                            .put("message", new JSONObject().put("content", replyContent)))).toString();
                     Response.Builder response = new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
                             .code(code).message("synthetic").body(ResponseBody.create(MediaType.parse("application/json"), envelope));
                     if (code == 429) response.header("Retry-After", "7");
@@ -220,5 +226,28 @@ public class CaptionBoundaryRefinerTest {
         }
         public void close() { engine.close(); session.close(); }
     }
+    private static List<String> parseMarkerItems(String userContent) {
+        List<String> items = new ArrayList<>();
+        String[] lines = userContent.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
+        StringBuilder current = null;
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if ("[[source_end]]".equals(trimmed)) {
+                if (current != null) items.add(current.toString());
+                break;
+            }
+            if (trimmed.startsWith("[[p") && trimmed.endsWith("]]")) {
+                if (current != null) items.add(current.toString());
+                current = new StringBuilder();
+                continue;
+            }
+            if (current != null) {
+                if (current.length() > 0) current.append('\n');
+                current.append(line.startsWith("\\[[") ? line.substring(1) : line);
+            }
+        }
+        return items;
+    }
+
     private static byte[] bytes(String source) { return source.getBytes(Charset.forName("UTF-8")); }
 }

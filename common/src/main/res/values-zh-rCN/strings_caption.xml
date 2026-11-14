@@ -19,6 +19,11 @@
     <string name="caption_ai_translation_first">双语（译文在上）</string>
     <string name="caption_ai_translation_only">仅显示译文</string>
     <string name="caption_ai_connection">AI 模型设置</string>
+    <string name="caption_ai_batch_size">单次翻译句数</string>
+    <string name="caption_ai_batch_default">%1$d（默认）</string>
+    <string name="caption_ai_batch_custom">自定义…</string>
+    <string name="caption_ai_batch_custom_hint">单次翻译句数（1–32）</string>
+    <string name="caption_ai_invalid_batch_size">请输入 1 到 32 之间的整数</string>
     <string name="caption_ai_service">接口类型 / 快捷填入</string>
     <string name="caption_ai_service_custom">OpenAI 兼容（通用）</string>
     <string name="caption_ai_service_openai_chat">OpenAI</string>

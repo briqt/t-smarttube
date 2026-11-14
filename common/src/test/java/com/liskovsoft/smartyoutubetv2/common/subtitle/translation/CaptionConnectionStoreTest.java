@@ -358,6 +358,19 @@ public class CaptionConnectionStoreTest {
         assertSame(profile.credentials, french.credentials);
         assertNotSame(french, saved.profile("zh"));
         assertEquals(before, raw(preferences));
+
+        TranslationCoordinator.Profile batched = saved.profile("zh", "Title: Hello\nChannel: World", 12);
+        assertNotNull(batched);
+        assertEquals("Title: Hello\nChannel: World", batched.context);
+        assertEquals(12, batched.batchLimits.items);
+        assertTrue(batched.batchLimits.sourceCodePoints >= 16000);
+        assertTrue(batched.batchLimits.contextCodePoints >= 4000);
+        assertTrue(batched.batchLimits.translatedCodePoints >= 24000);
+        assertSame(batched, saved.profile("zh", "Title: Hello\nChannel: World", 12));
+        assertSame(profile.credentials, batched.credentials);
+        assertNotSame(batched, saved.profile("zh", "Title: Hello\nChannel: World", 16));
+        assertNotSame(batched, saved.profile("zh", "Title: Other\nChannel: World", 12));
+        assertEquals(before, raw(preferences));
     }
 
     @Test

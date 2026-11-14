@@ -85,19 +85,19 @@ public class CaptionNeighborContextBudgetTest {
             assertEquals(Collections.singletonList(TARGET), root.get(1).sources());
             assertTrue("The target must actually have been omitted from the first response", h.omissionUsed);
 
-            Packet reversed = h.onlyPacket("reordered");
-            List<String> expectedReverse = new ArrayList<>(root.get(0).sources());
-            Collections.reverse(expectedReverse);
-            assertEquals(expectedReverse, reversed.sources());
-            assertFalse("The peer-order probe must really change order", root.get(0).sources().equals(reversed.sources()));
+            Packet trimmedTail = h.onlyPacket("tail-trimmed");
+            assertEquals(6, trimmedTail.sources().size());
+            assertEquals(root.get(0).sources().subList(0, 6), trimmedTail.sources());
             Packet alone = h.onlyPacket("without-peers");
             assertEquals(Collections.singletonList(TARGET), alone.sources());
 
             Receipt original = root.get(0).target();
-            for (Receipt receipt : Arrays.asList(root.get(1).target(), reversed.target(), alone.target())) {
+            for (Receipt receipt : Arrays.asList(root.get(1).target(), trimmedTail.target(), alone.target())) {
                 assertSameContext(original, receipt);
                 assertOwnEvidence(receipt);
             }
+            Packet reordered = h.onlyPacket("reordered");
+            assertEquals(Collections.<String>emptyList(), reordered.priorLines);
             assertOwnEvidence(original);
             h.assertCurrentSink(PERMIT);
         }
@@ -114,41 +114,27 @@ public class CaptionNeighborContextBudgetTest {
                 assertEquals(12, singleton.size());
                 assertOwnEvidence(singleton.get(TARGET));
             }
-            long allContext = cp(EXPLICIT);
             long allSource = 0;
             for (Receipt receipt : singleton.values()) {
-                allContext += cp(receipt.localContext);
                 allSource += cp(receipt.source);
             }
-            assertTrue("Source budget must not be the reason twelve targets cannot fit", allSource <= 6000);
-            // No assertion fixes the producer's quote limit, labels, radius or a 512-CP policy.
-            // A fixture that does not actually create pressure is NOT budget-reduction evidence.
-            assertTrue("UNEXERCISED_CONTEXT_PRESSURE: observed singleton contexts fit in one batch; " +
-                    "this fixture cannot establish long-neighbor pressure reduction", allContext > BUDGET);
+            assertTrue("Long neighbors must exceed the single-batch source budget", allSource > 6000);
 
             try (Harness h = new Harness(input, owner, EXPLICIT, BUDGET, 12, false)) {
                 h.completeAll();
                 Map<String, Receipt> packed = h.firstReceiptsBySource();
                 assertEquals(singleton.keySet(), packed.keySet());
-                for (String source : singleton.keySet()) assertSameContext(singleton.get(source), packed.get(source));
-                assertTrue("Long contexts require fewer than twelve targets, not an oversized request",
-                        h.largestCoordinatorBatch() < 12);
-                boolean pairFits = false;
-                List<Receipt> baselineItems = new ArrayList<>(singleton.values());
-                for (int i = 0; i < baselineItems.size(); i++) {
-                    for (int j = i + 1; j < baselineItems.size(); j++) {
-                        Receipt a = baselineItems.get(i), b = baselineItems.get(j);
-                        if ((long) cp(EXPLICIT) + cp(a.localContext) + cp(b.localContext) <= BUDGET &&
-                                (long) cp(a.source) + cp(b.source) <= 6000) pairFits = true;
-                    }
-                }
-                if (pairFits) {
-                    assertTrue("A demonstrably fitting pair must not be needlessly degraded to singleton requests",
-                            h.largestCoordinatorBatch() > 1);
-                }
                 for (Packet packet : h.packets("coordinator")) {
-                    assertTrue("Fixture source data must leave room for a pair", packet.sourceCodePoints <= 6000);
+                    String batchHead = packet.receipts.get(0).source;
+                    assertEquals("Packing must not trim batch-head prior context",
+                            singleton.get(batchHead).priorLines, packet.priorLines);
+                    assertTrue(packet.sourceCodePoints <= 6000);
+                    assertTrue(packet.contextCodePoints <= BUDGET);
                 }
+                assertTrue("Long sources require fewer than twelve targets, not an oversized request",
+                        h.largestCoordinatorBatch() < 12);
+                assertTrue("Fitting initial cues must pack more than one target",
+                        h.largestCoordinatorBatch() > 1);
                 h.assertCurrentSink(PERMIT);
             }
         }
@@ -182,28 +168,40 @@ public class CaptionNeighborContextBudgetTest {
             assertTrue(h.httpCalls > 0);
             Receipt target = h.firstTarget("coordinator");
             assertEquals(explicit, target.globalContext);
-            assertEquals("No per-item allowance remains after explicit global context", "", target.localContext);
+            assertEquals("No local context allowance remains after explicit global context", "", target.localContext);
             assertOwnEvidence(target);
             h.assertCurrentSink(PERMIT);
         }
     }
 
     @Test
-    public void accountingOracleItselfRejectsTwelveTimesFourHundredWithoutAnyProductRequest() throws Exception {
+    public void accountingOracleItselfRejectsOversizedBatchContextWithoutAnyProductRequest() throws Exception {
         // Supplementary characters ensure the ledger uses code points, not UTF-16 char length.
-        JSONObject exact = data("", Collections.singletonList("🙂🙂"));
-        assertEquals(2, assertContextBudget(exact, 2));
-        String fourHundred = repeat("🙂", 400);
-        assertEquals(400, cp(fourHundred));
-        JSONObject bad = data(EXPLICIT, Collections.nCopies(12, fourHundred));
+        Input input = new Input(false);
         try {
-            assertContextBudget(bad, BUDGET);
-        } catch (ContextBudgetExceeded caught) {
-            assertEquals((long) cp(EXPLICIT) + 12L * 400, caught.measured);
-            assertEquals(BUDGET, caught.budget);
-            return;
+            TranslationBatch exact = new TranslationBatch(input.snapshot.groups, Arrays.asList(1, 2),
+                    "en", "zh", "", new TranslationBatch.Limits(12, 6000, 2, 24000),
+                    Collections.singletonList("🙂"), "🙂");
+            assertEquals(2, assertContextBudget(ChatCompletionAdapterTest.parseRequest(
+                    BoundedJson.object(new String(ChatCompletionAdapter.encode(exact,
+                            new ChatCompletionAdapter.Config("https://neighbor-budget.invalid/chat/completions",
+                                    "synthetic-budget-model", 512, 262144, 262144,
+                                    ChatCompletionAdapter.TokenField.MAX_TOKENS, ChatCompletionAdapter.Thinking.OMIT)),
+                            UTF8))), 2));
+            String fiveHundred = repeat("🙂", 500);
+            assertEquals(500, cp(fiveHundred));
+            List<String> prior = Arrays.asList(fiveHundred, fiveHundred, fiveHundred);
+            try {
+                new TranslationBatch(input.snapshot.groups, Arrays.asList(1, 2),
+                        "en", "zh", EXPLICIT, new TranslationBatch.Limits(12, 6000, BUDGET, 24000),
+                        prior, repeat("🙂", 600));
+                fail("Expected over-budget batch context to be rejected");
+            } catch (IllegalArgumentException expected) {
+                assertEquals("Invalid caption translation data", expected.getMessage());
+            }
+        } finally {
+            input.close();
         }
-        fail("The wire ledger accepted 12 x 400 context CP against a 2000-CP batch budget");
     }
 
     private static int cp(String text) { return text.codePointCount(0, text.length()); }
@@ -214,16 +212,9 @@ public class CaptionNeighborContextBudgetTest {
         return result.toString();
     }
 
-    private static String stringOrEmpty(JSONObject object, String field) throws Exception {
-        Object value = object.has(field) ? object.get(field) : "";
-        assertTrue(field + " must be a string when present", value instanceof String);
-        return (String) value;
-    }
-
-    private static long assertContextBudget(JSONObject input, int budget) throws Exception {
-        long total = cp(stringOrEmpty(input, "context"));
-        JSONArray items = input.getJSONArray("items");
-        for (int i = 0; i < items.length(); i++) total += cp(stringOrEmpty(items.getJSONObject(i), "context"));
+    private static long assertContextBudget(ChatCompletionAdapterTest.ParsedRequest req, int budget) {
+        long total = cp(req.videoContext) + cp(req.nextLine);
+        for (String line : req.priorLines) total += cp(line);
         if (total > budget) throw new ContextBudgetExceeded(total, budget);
         return total;
     }
@@ -232,19 +223,10 @@ public class CaptionNeighborContextBudgetTest {
         final long measured;
         final int budget;
         ContextBudgetExceeded(long measured, int budget) {
-            super("CONTEXT_BUDGET_EXCEEDED: global + sum(item.context) = " + measured + ", limit = " + budget);
+            super("CONTEXT_BUDGET_EXCEEDED: video + sum(prior) + next = " + measured + ", limit = " + budget);
             this.measured = measured;
             this.budget = budget;
         }
-    }
-
-    private static JSONObject data(String global, List<String> contexts) throws Exception {
-        JSONArray items = new JSONArray();
-        for (int i = 0; i < contexts.size(); i++) {
-            items.put(new JSONObject().put("id", "synthetic" + i).put("source", "fixture text")
-                    .put("context", contexts.get(i)));
-        }
-        return new JSONObject().put("context", global).put("items", items);
     }
 
     private static String answer(String source, String effectiveContext) {
@@ -263,18 +245,20 @@ public class CaptionNeighborContextBudgetTest {
         assertNotNull(actual);
         assertEquals(expected.source, actual.source);
         assertEquals("Global evidence must not depend on the selected peers", expected.globalContext, actual.globalContext);
-        assertEquals("The item's own frozen context must survive batch size/order/subset changes",
-                expected.localContext, actual.localContext);
+        assertEquals("Batch-head prior context must survive recovery/tail trimming",
+                expected.priorLines, actual.priorLines);
     }
 
     private static final class Receipt {
         final String source;
         final String globalContext;
+        final List<String> priorLines;
         final String localContext;
         final String translation;
-        Receipt(String source, String globalContext, String localContext) {
+        Receipt(String source, String globalContext, List<String> priorLines, String localContext) {
             this.source = source;
             this.globalContext = globalContext;
+            this.priorLines = priorLines;
             this.localContext = localContext;
             translation = answer(source, globalContext + "\n" + localContext);
         }
@@ -282,9 +266,16 @@ public class CaptionNeighborContextBudgetTest {
 
     private static final class Packet {
         final String phase;
+        final List<String> priorLines;
+        final String nextLine;
         final List<Receipt> receipts = new ArrayList<>();
         int sourceCodePoints;
-        Packet(String phase) { this.phase = phase; }
+        int contextCodePoints;
+        Packet(String phase, List<String> priorLines, String nextLine) {
+            this.phase = phase;
+            this.priorLines = priorLines;
+            this.nextLine = nextLine;
+        }
         List<String> sources() {
             List<String> sources = new ArrayList<>();
             for (Receipt receipt : receipts) sources.add(receipt.source);
@@ -323,7 +314,7 @@ public class CaptionNeighborContextBudgetTest {
             targets.add(TARGET);
             for (int i = 0; i < 11; i++) {
                 targets.add(longNeighbors ? "Account " + i + " did not authorize the transfer. " +
-                        repeat("The written record remains available. ", 10) + "End of account " + i + "." : "Note " + i + ".");
+                        repeat("The written record remains available. ", 14) + "End of account " + i + "." : "Note " + i + ".");
             }
             StringBuilder document = new StringBuilder("WEBVTT\n\n00:01.000 --> 00:02.000\n")
                     .append(ANTECEDENT).append("\n\n");
@@ -378,28 +369,33 @@ public class CaptionNeighborContextBudgetTest {
                             Buffer bytes = new Buffer();
                             chain.request().body().writeTo(bytes);
                             JSONObject body = BoundedJson.object(bytes.readUtf8());
-                            JSONObject data = userInput(body);
-                            assertContextBudget(data, budget); // Every actual original, probe and recovery request.
-                            String global = stringOrEmpty(data, "context");
-                            assertEquals("Explicit context must retain its configured meaning", explicit, global);
-                            Packet packet = new Packet(phase);
-                            JSONArray items = data.getJSONArray("items");
-                            assertTrue("A real nonempty batch is required", items.length() > 0);
-                            assertTrue(items.length() <= maxItems);
-                            JSONArray output = new JSONArray();
-                            for (int i = 0; i < items.length(); i++) {
-                                JSONObject item = items.getJSONObject(i);
-                                Receipt receipt = new Receipt(item.getString("source"), global, stringOrEmpty(item, "context"));
+                            ChatCompletionAdapterTest.ParsedRequest req = ChatCompletionAdapterTest.parseRequest(body);
+                            long usedContext = assertContextBudget(req, budget); // Every actual original, probe and recovery request.
+                            assertEquals("Explicit context must retain its configured meaning", explicit, req.videoContext);
+                            Packet packet = new Packet(phase, req.priorLines, req.nextLine);
+                            packet.contextCodePoints = (int) usedContext;
+                            assertTrue("A real nonempty batch is required", !req.sources.isEmpty());
+                            assertTrue(req.sources.size() <= maxItems);
+                            String batchLocalContext = req.priorLines.isEmpty() ? "" : String.join("\n", req.priorLines);
+                            if (!req.nextLine.isEmpty()) {
+                                batchLocalContext = batchLocalContext.isEmpty() ? req.nextLine : batchLocalContext + "\n" + req.nextLine;
+                            }
+                            List<String> output = new ArrayList<>();
+                            for (int i = 0; i < req.sources.size(); i++) {
+                                String source = req.sources.get(i);
+                                String itemLocalContext = i == 0 ? batchLocalContext : "";
+                                Receipt receipt = new Receipt(source, req.videoContext, req.priorLines, itemLocalContext);
                                 packet.receipts.add(receipt);
                                 packet.sourceCodePoints += cp(receipt.source);
                                 if (probeAndRecover && "coordinator".equals(phase) && !omissionUsed && TARGET.equals(receipt.source)) {
                                     omissionUsed = true; // Only one missing item; real Job.subset performs recovery.
+                                    output.add(null);
                                 } else {
-                                    output.put(new JSONObject().put("id", item.getString("id")).put("text", receipt.translation));
+                                    output.add(receipt.translation);
                                 }
                             }
                             packets.add(packet);
-                            String content = new JSONObject().put("translations", output).toString();
+                            String content = ChatCompletionAdapterTest.markerReply(output);
                             String envelope = new JSONObject().put("choices", new JSONArray().put(new JSONObject()
                                     .put("finish_reason", "stop").put("message", new JSONObject().put("content", content)))).toString();
                             return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
@@ -446,6 +442,9 @@ public class CaptionNeighborContextBudgetTest {
             try {
                 // Use only the existing subset API on the Coordinator's finalized production batch.
                 // These probes never manufacture or reach into an item's new context implementation.
+                phase = "tail-trimmed";
+                assertEquals(ChatTranslationClient.Status.COMPLETE,
+                        client.newJob(batch.subset(batch.getItems().subList(0, 6)), activeProfile.wire, activeProfile.credentials, 1).execute().status);
                 phase = "reordered";
                 assertEquals(ChatTranslationClient.Status.COMPLETE,
                         client.newJob(batch.subset(reversed), activeProfile.wire, activeProfile.credentials, 1).execute().status);
@@ -519,19 +518,5 @@ public class CaptionNeighborContextBudgetTest {
         }
 
         @Override public void close() { engine.close(); }
-    }
-
-    private static JSONObject userInput(JSONObject body) throws Exception {
-        JSONObject input = null;
-        JSONArray messages = body.getJSONArray("messages");
-        for (int i = 0; i < messages.length(); i++) {
-            JSONObject message = messages.getJSONObject(i);
-            if ("user".equals(message.getString("role"))) {
-                assertNull("One actual caption data message", input);
-                input = BoundedJson.object(message.getString("content"));
-            }
-        }
-        assertNotNull(input);
-        return input;
     }
 }

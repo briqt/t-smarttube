@@ -183,7 +183,8 @@ public final class CaptionPreferenceStore {
             CaptionPreferences.Global global = preferences.global;
             JSONObject object = new JSONObject().put("version", 1).put("revision", Long.toString(revision));
             object.put("global", new JSONObject().put("target", nullable(global.targetLanguage))
-                    .put("mode", global.mode.name()).put("order", global.order.name()).put("connection", nullable(global.connectionId)));
+                    .put("mode", global.mode.name()).put("order", global.order.name()).put("connection", nullable(global.connectionId))
+                    .put("batchSize", global.batchSize));
             JSONObject channels = new JSONObject();
             for (Map.Entry<String, CaptionPreferences.Channel> entry : preferences.channels().entrySet()) {
                 CaptionPreferences.Channel channel = entry.getValue();
@@ -208,11 +209,17 @@ public final class CaptionPreferenceStore {
             Object version = root.opt("version");
             if (!(version instanceof Number) || new BigDecimal(version.toString()).compareTo(BigDecimal.ONE) != 0) throw CaptionPreferences.invalid();
             JSONObject global = root.optJSONObject("global"), channels = root.optJSONObject("channels");
-            keys(global, "target", "mode", "order", "connection");
+            int batchSize = CaptionPreferences.Global.DEFAULT_BATCH_SIZE;
+            if (global != null && global.length() == 5) {
+                keys(global, "target", "mode", "order", "connection", "batchSize");
+                batchSize = batchSize(global);
+            } else {
+                keys(global, "target", "mode", "order", "connection");
+            }
             if (channels == null || channels.length() > mLimits.channels) throw CaptionPreferences.invalid();
             CaptionPreferences.Global settings = new CaptionPreferences.Global(optional(global, "target"),
                     NativeCueComposer.Mode.valueOf(required(global, "mode")),
-                    NativeCueComposer.Order.valueOf(required(global, "order")), optional(global, "connection"));
+                    NativeCueComposer.Order.valueOf(required(global, "order")), optional(global, "connection"), batchSize);
             Map<String, CaptionPreferences.Channel> result = new LinkedHashMap<>();
             Iterator<String> names = channels.keys();
             while (names.hasNext()) {
@@ -227,6 +234,24 @@ public final class CaptionPreferenceStore {
             }
             return new Snapshot(this, new CaptionPreferences(settings, result), true, source, revision);
         } catch (RuntimeException ignored) { throw CaptionPreferences.invalid(); }
+    }
+
+    private static int batchSize(JSONObject object) {
+        Object value = object.opt("batchSize");
+        if (!(value instanceof BigDecimal || value instanceof Integer || value instanceof Long)) {
+            throw CaptionPreferences.invalid();
+        }
+        try {
+            BigDecimal decimal = value instanceof BigDecimal ? (BigDecimal) value
+                    : BigDecimal.valueOf(((Number) value).longValue());
+            int parsed = decimal.intValueExact();
+            if (parsed < CaptionPreferences.Global.MIN_BATCH_SIZE || parsed > CaptionPreferences.Global.MAX_BATCH_SIZE) {
+                throw CaptionPreferences.invalid();
+            }
+            return parsed;
+        } catch (ArithmeticException ignored) {
+            throw CaptionPreferences.invalid();
+        }
     }
 
     private static void keys(JSONObject object, String... keys) {

@@ -51,7 +51,12 @@ public class CaptionBoundaryAdapterTest {
                     service == CaptionService.GEMINI ? "gemini-2.5-flash" : service == CaptionService.CLAUDE ? "claude-sonnet-4-6" : "gpt-5.5",
                     ChatCompletionAdapter.Thinking.AUTO_LOW);
             JSONObject body = new JSONObject(new String(CaptionBoundaryAdapter.encode(proposal, wire, "en"), Charset.forName("UTF-8")));
-            assertFalse(body.has("temperature"));
+            if (service == CaptionService.GEMINI) {
+                assertFalse(body.has("temperature"));
+                assertEquals(0, body.getJSONObject("generationConfig").getInt("temperature"));
+            } else {
+                assertEquals(0, body.getInt("temperature"));
+            }
             if (service == CaptionService.OPENAI_RESPONSES) assertEquals(512, body.getInt("max_output_tokens"));
             if (service == CaptionService.CLAUDE) assertEquals(512, body.getInt("max_tokens"));
             if (service == CaptionService.GEMINI) assertEquals(512, body.getJSONObject("generationConfig").getInt("maxOutputTokens"));

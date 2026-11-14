@@ -49,9 +49,9 @@ public class ChatTranslationClientTest {
         assertEquals(2, result.calls);
         assertSame(batch, result.batch);
         assertEquals(Arrays.asList("g0", "g1"), new ArrayList<>(result.translations.keySet()));
-        JSONObject retryInput = BoundedJson.object(bodies.get(1).getJSONArray("messages").getJSONObject(1).getString("content"));
-        assertEquals(1, retryInput.getJSONArray("items").length());
-        assertEquals("g0", retryInput.getJSONArray("items").getJSONObject(0).getString("id"));
+        String retryInput = bodies.get(1).getJSONArray("messages").getJSONObject(1).getString("content");
+        assertTrue(retryInput.contains("[[p0]]\nfirst\n[[source_end]]"));
+        assertFalse(retryInput.contains("[[p1]]"));
     }
 
     @Test
@@ -64,7 +64,7 @@ public class ChatTranslationClientTest {
                 assertEquals(TimeUnit.MILLISECONDS.toNanos(call == 0 ? 45000 : 1000), chain.call().timeout().timeoutNanos());
                 now[0] = TimeUnit.MILLISECONDS.toNanos(elapsedMs);
                 try {
-                    return response(chain.request(), 200, envelope("stop", output(call == 0 ? "g0" : "g1", "译文"), null));
+                    return response(chain.request(), 200, envelope("stop", output("g0", "译文"), null));
                 } catch (Exception e) { throw new AssertionError(e); }
             }).build(), () -> now[0]);
             ChatTranslationClient.Result result = client.newJob(batch("first", "second"), config(), () -> "synthetic", 2).execute();
@@ -82,7 +82,7 @@ public class ChatTranslationClientTest {
             int call = calls[0]++;
             try {
                 byte[] body = call == 0 ? envelope("length", output("g0", "truncated"), null) :
-                        envelope("stop", output(call == 1 ? "g0" : "g1", call == 1 ? "第一" : "第二"), null);
+                        envelope("stop", output("g0", call == 1 ? "第一" : "第二"), null);
                 return response(chain.request(), 200, body);
             } catch (Exception e) { throw new AssertionError(e); }
         });
@@ -206,7 +206,7 @@ public class ChatTranslationClientTest {
             try {
                 boolean first = calls[0]++ == 0;
                 if (!first) holder.get().cancel();
-                return response(chain.request(), 200, envelope("stop", output(first ? "g0" : "g1", "译文"), null));
+                return response(chain.request(), 200, envelope("stop", output("g0", "译文"), null));
             } catch (Exception e) { throw new AssertionError(e); }
         });
         ChatTranslationClient.Job job = client.newJob(batch("first", "second"), config(), () -> "synthetic", 3);
@@ -219,11 +219,10 @@ public class ChatTranslationClientTest {
 
     @Test
     public void recoverySharesOneTotalOutputBudgetAcrossAllAttempts() throws Exception {
-        int[] calls = {0};
         ChatTranslationClient client = client(chain -> {
             try {
                 return response(chain.request(), 200, envelope("stop",
-                        output(calls[0]++ == 0 ? "g0" : "g1", "abcdefghij"), null));
+                        output("g0", "abcdefghij"), null));
             } catch (Exception e) { throw new AssertionError(e); }
         });
         TranslationBatch batch = new TranslationBatch(plan("first", "second"), Arrays.asList(0, 1), null, "zh", "",

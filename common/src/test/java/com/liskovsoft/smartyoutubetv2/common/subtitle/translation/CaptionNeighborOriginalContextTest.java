@@ -257,21 +257,26 @@ public class CaptionNeighborOriginalContextTest {
                             assertNotNull(chain.request().body());
                             chain.request().body().writeTo(buffer);
                             JSONObject body = BoundedJson.object(buffer.readUtf8());
-                            JSONObject input = userInput(body);
-                            assertEquals("en", input.getString("source_language"));
-                            assertEquals("zh", input.getString("target_language"));
-                            String global = stringOrEmpty(input, "context");
-                            assertEquals("The explicit template context remains empty", "", global);
-                            JSONArray items = input.getJSONArray("items");
-                            assertTrue(items.length() > 0);
-                            JSONArray output = new JSONArray();
-                            for (int i = 0; i < items.length(); i++) {
-                                JSONObject item = items.getJSONObject(i);
-                                Receipt receipt = new Receipt(item.getString("source"), global + "\n" + stringOrEmpty(item, "context"));
+                            ChatCompletionAdapterTest.ParsedRequest req = ChatCompletionAdapterTest.parseRequest(body);
+                            assertEquals("en", req.sourceLanguage);
+                            assertEquals("zh", req.targetLanguage);
+                            assertEquals("", req.videoContext);
+                            assertFalse(req.sources.isEmpty());
+                            String batchContext = req.combinedContext();
+                            List<String> output = new ArrayList<>();
+                            for (int i = 0; i < req.sources.size(); i++) {
+                                String source = req.sources.get(i);
+                                StringBuilder effective = new StringBuilder(batchContext);
+                                for (int j = 0; j < req.sources.size(); j++) {
+                                    if (j == i) continue;
+                                    if (effective.length() > 0) effective.append('\n');
+                                    effective.append(req.sources.get(j));
+                                }
+                                Receipt receipt = new Receipt(source, effective.toString());
                                 receipts.add(receipt);
-                                output.put(new JSONObject().put("id", item.getString("id")).put("text", receipt.translation));
+                                output.add(receipt.translation);
                             }
-                            String content = new JSONObject().put("translations", output).toString();
+                            String content = ChatCompletionAdapterTest.markerReply(output);
                             String response = new JSONObject().put("choices", new JSONArray().put(new JSONObject()
                                     .put("finish_reason", "stop").put("message", new JSONObject().put("content", content)))).toString();
                             return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
@@ -487,26 +492,6 @@ public class CaptionNeighborOriginalContextTest {
             decoder.release();
             observation.close();
         }
-    }
-
-    private static String stringOrEmpty(JSONObject object, String field) throws Exception {
-        Object value = object.has(field) ? object.get(field) : "";
-        assertTrue(field + " must be a string when present", value instanceof String);
-        return (String) value;
-    }
-
-    private static JSONObject userInput(JSONObject body) throws Exception {
-        JSONObject input = null;
-        JSONArray messages = body.getJSONArray("messages");
-        for (int i = 0; i < messages.length(); i++) {
-            JSONObject message = messages.getJSONObject(i);
-            if ("user".equals(message.getString("role"))) {
-                assertNull(input);
-                input = BoundedJson.object(message.getString("content"));
-            }
-        }
-        assertNotNull(input);
-        return input;
     }
 
     private static MediaSubtitle caption(String name, String url) {

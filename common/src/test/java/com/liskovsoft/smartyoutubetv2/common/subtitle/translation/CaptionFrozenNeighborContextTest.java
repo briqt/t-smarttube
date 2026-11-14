@@ -46,19 +46,18 @@ public class CaptionFrozenNeighborContextTest {
     public void batchCountsGlobalAndEveryRepeatedLocalCopyIncludingUnicodeAndLabels() throws Exception {
         try (Harness h = new Harness(12, 2000, "", 16, 8192, 1000, 0, PRIOR + TARGET)) {
             String global = "explicit🙂";
-            String local = "[before]\nno🙂\n";
-            Map<Integer, String> contexts = new HashMap<>();
-            contexts.put(0, local);
-            contexts.put(1, local);
-            int total = cp(global) + 2 * cp(local);
-            TranslationBatch batch = batch(h, Arrays.asList(0, 1), global, total, contexts);
-            JSONObject input = input(ChatCompletionAdapter.encode(batch, wire()));
-            assertEquals(total, sentContextPoints(input));
-            assertEquals(local, input.getJSONArray("items").getJSONObject(0).getString("context"));
-            assertEquals(local, input.getJSONArray("items").getJSONObject(1).getString("context"));
-            invalid(() -> batch(h, Arrays.asList(0, 1), global, total - 1, contexts));
-            contexts.put(1, "\ud800");
-            invalid(() -> batch(h, Arrays.asList(0, 1), global, total, contexts));
+            List<String> prior = Collections.singletonList("no🙂");
+            String next = "after🙂";
+            int total = cp(global) + cp(prior.get(0)) + cp(next);
+            TranslationBatch batch = batch(h, Arrays.asList(0, 1), global, total, prior, next);
+            ChatCompletionAdapterTest.ParsedRequest parsed = input(ChatCompletionAdapter.encode(batch, wire()));
+            assertEquals(total, sentContextPoints(parsed));
+            assertEquals(global, parsed.videoContext);
+            assertEquals(prior, parsed.priorLines);
+            assertEquals(next, parsed.nextLine);
+            invalid(() -> batch(h, Arrays.asList(0, 1), global, total - 1, prior, next));
+            invalid(() -> batch(h, Arrays.asList(0, 1), global, total, Collections.singletonList("\ud800"), ""));
+            invalid(() -> batch(h, Arrays.asList(0, 1), global, total, Collections.emptyList(), "\ud800"));
         }
     }
 
@@ -67,49 +66,63 @@ public class CaptionFrozenNeighborContextTest {
         StringBuilder cues = new StringBuilder();
         for (int i = 0; i < 12; i++) cues.append(cue(i * 2 + 1, "item" + i));
         try (Harness h = new Harness(12, 2000, "", 16, 8192, 1000, 0, cues.toString())) {
-            Map<Integer, String> contexts = new HashMap<>();
             List<Integer> indices = new ArrayList<>();
-            for (int i = 0; i < 12; i++) { indices.add(i); contexts.put(i, "[n]🙂"); }
+            for (int i = 0; i < 12; i++) indices.add(i);
             String global = "g";
-            int total = cp(global) + 12 * cp("[n]🙂");
-            TranslationBatch original = batch(h, indices, global, total, contexts);
+            List<String> prior = Collections.singletonList("[n]🙂");
+            String next = "[tail]🙂";
+            int total = cp(global) + cp(prior.get(0)) + cp(next);
+            TranslationBatch original = batch(h, indices, global, total, prior, next);
             assertEquals(12, original.getItems().size());
             assertEquals(total, sentContextPoints(input(ChatCompletionAdapter.encode(original, wire()))));
-            TranslationBatch.Item item = original.getItems().get(5);
-            contexts.put(5, "later mutation must not upgrade the frozen item");
+
+            TranslationBatch.Item first = original.getItems().get(0);
+            TranslationBatch.Item middle = original.getItems().get(5);
+            TranslationBatch.Item last = original.getItems().get(11);
             h.replace(cues + cue(26, "newly observed tail"));
-            TranslationBatch subset = original.subset(Collections.singletonList(item));
-            assertSame(item, subset.getItems().get(0));
-            assertEquals("[n]🙂", item.context);
-            JSONObject subsetInput = input(ChatCompletionAdapter.encode(subset, wire()));
-            assertEquals(cp(global) + cp(item.context), sentContextPoints(subsetInput));
-            assertEquals(item.context, subsetInput.getJSONArray("items").getJSONObject(0).getString("context"));
-            assertTrue(subset.isFor(originalPlan(original, h))); // Parent plan, not h's newly installed Plan.
+
+            TranslationBatch headSubset = original.subset(Collections.singletonList(first));
+            assertSame(first, headSubset.getItems().get(0));
+            assertEquals(prior, headSubset.priorLines);
+            assertEquals("", headSubset.nextLine);
+            ChatCompletionAdapterTest.ParsedRequest headParsed = input(ChatCompletionAdapter.encode(headSubset, wire()));
+            assertEquals(cp(global) + cp(prior.get(0)), sentContextPoints(headParsed));
+            assertEquals(prior, headParsed.priorLines);
+            assertEquals("", headParsed.nextLine);
+            assertTrue(headSubset.isFor(originalPlan(original, h)));
+
+            TranslationBatch middleSubset = original.subset(Collections.singletonList(middle));
+            assertTrue(middleSubset.priorLines.isEmpty());
+            assertEquals("", middleSubset.nextLine);
+
+            TranslationBatch tailSubset = original.subset(Collections.singletonList(last));
+            assertTrue(tailSubset.priorLines.isEmpty());
+            assertEquals(next, tailSubset.nextLine);
+            assertTrue(tailSubset.isFor(originalPlan(original, h)));
         }
     }
 
     @Test
     public void realClientTruncationRecoveryKeepsLocalContextsAndTheOriginalTotalBudget() throws Exception {
         try (Harness h = new Harness(2, 2000, "", 16, 8192, 1000, 0, PRIOR + TARGET)) {
-            Map<Integer, String> contexts = new HashMap<>();
-            contexts.put(0, "[after]\ntarget\n");
-            contexts.put(1, "[before]\ndid not approve\n");
-            int total = cp("global") + cp(contexts.get(0)) + cp(contexts.get(1));
-            TranslationBatch original = batch(h, Arrays.asList(0, 1), "global", total, contexts);
-            List<JSONObject> actual = new ArrayList<>();
+            List<String> prior = Collections.singletonList("did not approve");
+            String next = "future context";
+            int total = cp("global") + cp(prior.get(0)) + cp(next);
+            TranslationBatch original = batch(h, Arrays.asList(0, 1), "global", total, prior, next);
+            List<ChatCompletionAdapterTest.ParsedRequest> actual = new ArrayList<>();
             ChatTranslationClient client = new ChatTranslationClient(new OkHttpClient.Builder()
                     .dns(host -> { throw new AssertionError("No DNS"); })
                     .addInterceptor(chain -> {
                         try {
                             Buffer buffer = new Buffer();
                             chain.request().body().writeTo(buffer);
-                            JSONObject data = input(buffer.readByteArray());
+                            ChatCompletionAdapterTest.ParsedRequest data = input(buffer.readByteArray());
                             actual.add(data);
                             assertTrue(sentContextPoints(data) <= total);
+                            assertEquals("global", data.videoContext);
                             if (actual.size() == 1) {
-                                contexts.put(1, "later context is not available to recovery");
                                 h.replace(TARGET + FUTURE);
-                                return response(chain.request(), "length", new JSONArray());
+                                return response(chain.request(), "length", Collections.emptyList());
                             }
                             return response(chain.request(), "stop", translations(data));
                         } catch (Exception failure) { throw new AssertionError(failure); }
@@ -117,13 +130,18 @@ public class CaptionFrozenNeighborContextTest {
             ChatTranslationClient.Result result = client.newJob(original, wire(), () -> "synthetic-context-key", 3).execute();
             assertEquals(ChatTranslationClient.Status.COMPLETE, result.status);
             assertEquals(3, actual.size());
+            assertEquals(prior, actual.get(0).priorLines);
+            assertEquals(next, actual.get(0).nextLine);
             for (int i = 1; i < actual.size(); i++) {
-                JSONArray items = actual.get(i).getJSONArray("items");
-                for (int j = 0; j < items.length(); j++) {
-                    JSONObject recovered = items.getJSONObject(j);
-                    String expected = recovered.getString("id").equals("g0") ? "[after]\ntarget\n" :
-                            "[before]\ndid not approve\n";
-                    assertEquals(expected, recovered.getString("context"));
+                ChatCompletionAdapterTest.ParsedRequest recovered = actual.get(i);
+                assertEquals(1, recovered.sources.size());
+                if ("did not approve".equals(recovered.sources.get(0))) {
+                    assertEquals(prior, recovered.priorLines);
+                    assertEquals("", recovered.nextLine);
+                } else {
+                    assertEquals("target", recovered.sources.get(0));
+                    assertTrue(recovered.priorLines.isEmpty());
+                    assertEquals(next, recovered.nextLine);
                 }
             }
         }
@@ -140,7 +158,7 @@ public class CaptionFrozenNeighborContextTest {
             assertTrue(cache.records().isEmpty());
             h.queue.drain();
             assertFalse(cache.records().isEmpty());
-            assertTrue(h.lastInputFor("target").getString("context").contains("did not approve"));
+            assertTrue(h.lastContextFor("target").contains("did not approve"));
         }
     }
 
@@ -149,7 +167,7 @@ public class CaptionFrozenNeighborContextTest {
         try (Harness h = new Harness(1, 2000, "", 16, 8192, 1000, 0, TARGET)) {
             h.start(3_500_000);
             int paid = h.inputs.size();
-            assertEquals("", h.lastInputFor("target").getString("context"));
+            assertEquals("", h.lastContextFor("target"));
             TranslationCoordinator.Frame old = h.engine.prepareFrame();
             h.replace(TARGET + FUTURE);
             h.tick(3_500_000, false);
@@ -164,7 +182,7 @@ public class CaptionFrozenNeighborContextTest {
             assertFalse(h.engine.deliver(nearExpiry, ignored -> fail("Hit must not extend expiry")));
             h.tick(3_500_000, false);
             assertEquals(paid + 1, h.inputs.size());
-            assertTrue(h.lastInputFor("target").getString("context").contains("new future"));
+            assertTrue(h.lastContextFor("target").contains("new future"));
         }
     }
 
@@ -173,7 +191,7 @@ public class CaptionFrozenNeighborContextTest {
         try (Harness h = new Harness(1, 2000, "", 16, 8192, 1000, 0, PRIOR + TARGET)) {
             h.start(3_500_000);
             int paid = h.inputs.size();
-            String frozen = h.lastInputFor("target").getString("context");
+            String frozen = h.lastContextFor("target");
             h.replace("00:00.000 --> 00:00.500\nunrelated prefix\n\n" + PRIOR + TARGET);
             h.tick(3_500_000, false);
             assertEquals(paid, h.inputs.size());
@@ -182,7 +200,8 @@ public class CaptionFrozenNeighborContextTest {
             assertEquals(paid, h.inputs.size());
             assertEquals("ok:target", h.engine.prepareFrame().items.get(0).translation);
             SemanticTranslationCache cache = ReflectionHelpers.getField(h.engine, "mCompleted");
-            assertTrue(cache.records().values().stream().anyMatch(record -> record.frozen != null && record.frozen.text.equals(frozen)));
+            assertTrue(cache.records().values().stream().anyMatch(
+                    record -> record.frozen != null && frozen.equals(frozenText(record.frozen))));
         }
     }
 
@@ -191,7 +210,7 @@ public class CaptionFrozenNeighborContextTest {
         String far = "00:30.000 --> 00:31.000\nfar\n\n";
         try (Harness h = new Harness(1, 2000, "", 16, 8192, 1000, 0, PRIOR + TARGET + far)) {
             h.start(3_500_000);
-            assertTrue(h.lastInputFor("target").getString("context").contains("did not approve"));
+            assertTrue(h.lastContextFor("target").contains("did not approve"));
             h.tick(30_500_000, true);
             int paid = h.inputs.size();
             TranslationCoordinator.Frame old = h.engine.prepareFrame();
@@ -201,7 +220,7 @@ public class CaptionFrozenNeighborContextTest {
             assertFalse(h.engine.deliver(old, ignored -> fail("Old Frame")));
             h.tick(3_500_000, true);
             assertEquals(paid + 1, h.inputs.size());
-            String revised = h.lastInputFor("target").getString("context");
+            String revised = h.lastContextFor("target");
             assertTrue(revised.contains("approved"));
             assertFalse(revised.contains("did not approve"));
         }
@@ -212,7 +231,7 @@ public class CaptionFrozenNeighborContextTest {
         try (Harness h = new Harness(1, 1, "", 16, 8192, 1000, 0, PRIOR + TARGET)) {
             h.start(3_500_000);
             int paid = h.inputs.size();
-            assertEquals("", h.lastInputFor("target").getString("context"));
+            assertEquals("", h.lastContextFor("target"));
             TranslationCoordinator.Frame old = h.engine.prepareFrame();
             SemanticTranslationCache cache = ReflectionHelpers.getField(h.engine, "mCompleted");
             SemanticTranslationCache.Record before = cache.records().values().iterator().next();
@@ -235,8 +254,10 @@ public class CaptionFrozenNeighborContextTest {
             try (Harness h = new Harness(1, cp(global), global, 16, 8192, 1000, 0, PRIOR + TARGET)) {
                 h.start(3_500_000);
                 int paid = h.inputs.size();
-                assertEquals(global, h.inputs.get(0).getString("context"));
-                assertEquals("", h.lastInputFor("target").getString("context"));
+                assertEquals(global, h.inputs.get(0).videoContext);
+                ChatCompletionAdapterTest.ParsedRequest targetReq = h.lastInputFor("target");
+                assertTrue(targetReq.priorLines.isEmpty());
+                assertEquals("", targetReq.nextLine);
                 SemanticTranslationCache cache = ReflectionHelpers.getField(h.engine, "mCompleted");
                 assertTrue(cache.records().values().iterator().next().frozen.dependencies.isEmpty());
                 h.replace(CHANGED + TARGET);
@@ -251,33 +272,35 @@ public class CaptionFrozenNeighborContextTest {
     public void workerPackingReducesTargetsRatherThanTrimmingTheirFrozenContexts() throws Exception {
         StringBuilder cues = new StringBuilder();
         for (int i = 0; i < 12; i++) cues.append(cue(i * 2 + 1, "item" + i + repeat('x', 120)));
-        try (Harness h = new Harness(12, 2000, "", 16, 8192, 1000, 30_000_000, cues.toString())) {
+        try (Harness h = new Harness(12, 600, 2000, "", 16, 8192, 1000, 30_000_000, cues.toString())) {
             h.start(1_500_000);
             assertFalse(h.inputs.isEmpty());
-            int firstItems = h.inputs.get(0).getJSONArray("items").length();
+            int firstItems = h.inputs.get(0).sources.size();
             assertTrue(firstItems > 0 && firstItems < 12);
             SemanticTranslationCache cache = ReflectionHelpers.getField(h.engine, "mCompleted");
-            Map<String, String> frozen = new HashMap<>();
+            Map<String, List<String>> frozenPrior = new HashMap<>();
+            Map<String, String> frozenNext = new HashMap<>();
             for (int i = 0; i < 12; i++) {
                 SemanticTranslationCache.Key base = SemanticTranslationCache.key(h.session.getSnapshot(), h.profile, i);
                 SemanticTranslationCache.Record record = cache.records().get(base);
                 assertNotNull(record);
                 assertNotNull(record.frozen);
-                frozen.put(h.session.getSnapshot().groups.getText(i), record.frozen.text);
+                String text = h.session.getSnapshot().groups.getText(i);
+                frozenPrior.put(text, record.frozen.priorLines);
+                frozenNext.put(text, record.frozen.nextLine);
             }
             for (int i = 0; i < 12; i++) h.tick(1_500_000, false);
-            Map<String, String> observed = new HashMap<>();
-            for (JSONObject request : h.inputs) {
+            List<String> observed = new ArrayList<>();
+            for (ChatCompletionAdapterTest.ParsedRequest request : h.inputs) {
                 assertTrue(sentContextPoints(request) <= 2000);
-                JSONArray items = request.getJSONArray("items");
-                for (int i = 0; i < items.length(); i++) {
-                    JSONObject item = items.getJSONObject(i);
-                    String source = item.getString("source");
-                    assertEquals(frozen.get(source), item.getString("context"));
-                    observed.put(source, item.getString("context"));
-                }
+                assertFalse(request.sources.isEmpty());
+                String headSource = request.sources.get(0);
+                String tailSource = request.sources.get(request.sources.size() - 1);
+                assertEquals(frozenPrior.get(headSource), request.priorLines);
+                assertEquals(frozenNext.get(tailSource), request.nextLine);
+                observed.addAll(request.sources);
             }
-            assertEquals(frozen, observed);
+            assertEquals(12, observed.size());
         }
     }
 
@@ -295,7 +318,8 @@ public class CaptionFrozenNeighborContextTest {
             }
             assertEquals(paid, h.inputs.size());
             SemanticTranslationCache cache = ReflectionHelpers.getField(h.engine, "mCompleted");
-            assertTrue(cache.records().values().stream().allMatch(record -> record.frozen != null && !record.frozen.text.isEmpty()));
+            assertTrue(cache.records().values().stream().allMatch(record -> record.frozen != null &&
+                    (!record.frozen.priorLines.isEmpty() || !record.frozen.nextLine.isEmpty())));
         }
     }
 
@@ -345,45 +369,53 @@ public class CaptionFrozenNeighborContextTest {
             h.start(3_500_000);
             h.tick(3_500_000, false);
             assertEquals(2, h.inputs.size());
-            assertTrue(h.lastInputFor("target").getString("context").contains("approved"));
-            assertFalse(h.lastInputFor("target").getString("context").contains("did not approve"));
+            assertTrue(h.lastContextFor("target").contains("approved"));
+            assertFalse(h.lastContextFor("target").contains("did not approve"));
             assertEquals("ok:target", h.engine.prepareFrame().items.get(0).translation);
         }
     }
 
-    private static TranslationBatch batch(Harness h, List<Integer> indices, String global, int budget, Map<Integer, String> contexts) {
+    private static TranslationBatch batch(Harness h, List<Integer> indices, String global, int budget,
+                                          List<String> priorLines, String nextLine) {
         return new TranslationBatch(h.session.getSnapshot().groups, indices, null, "zh", global,
-                new TranslationBatch.Limits(12, 10000, budget, 10000), contexts);
+                new TranslationBatch.Limits(12, 10000, budget, 10000), priorLines, nextLine);
     }
 
     private static SemanticGroupPlanner.Plan originalPlan(TranslationBatch batch, Harness ignored) {
         return ReflectionHelpers.getField(batch, "mPlan");
     }
 
-    private static JSONObject input(byte[] bytes) throws Exception {
-        JSONObject body = BoundedJson.object(new String(bytes, UTF8));
-        return BoundedJson.object(body.getJSONArray("messages").getJSONObject(1).getString("content"));
+    private static ChatCompletionAdapterTest.ParsedRequest input(byte[] bytes) throws Exception {
+        return ChatCompletionAdapterTest.parseRequest(BoundedJson.object(new String(bytes, UTF8)));
     }
 
-    private static int sentContextPoints(JSONObject input) throws Exception {
-        int sum = cp(input.getString("context"));
-        JSONArray items = input.getJSONArray("items");
-        for (int i = 0; i < items.length(); i++) sum += cp(items.getJSONObject(i).getString("context"));
+    private static int sentContextPoints(ChatCompletionAdapterTest.ParsedRequest parsed) {
+        int sum = cp(parsed.videoContext) + cp(parsed.nextLine);
+        for (String line : parsed.priorLines) sum += cp(line);
         return sum;
     }
 
-    private static JSONArray translations(JSONObject input) throws Exception {
-        JSONArray result = new JSONArray();
-        JSONArray items = input.getJSONArray("items");
-        for (int i = 0; i < items.length(); i++) {
-            JSONObject item = items.getJSONObject(i);
-            result.put(new JSONObject().put("id", item.getString("id")).put("text", "ok:" + item.getString("source")));
+    private static String frozenText(CaptionNeighborContext.Frozen frozen) {
+        StringBuilder sb = new StringBuilder();
+        for (String line : frozen.priorLines) {
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(line);
         }
+        if (!frozen.nextLine.isEmpty()) {
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(frozen.nextLine);
+        }
+        return sb.toString();
+    }
+
+    private static List<String> translations(ChatCompletionAdapterTest.ParsedRequest parsed) {
+        List<String> result = new ArrayList<>();
+        for (String source : parsed.sources) result.add("ok:" + source);
         return result;
     }
 
-    private static Response response(okhttp3.Request request, String finish, JSONArray items) throws Exception {
-        String content = new JSONObject().put("translations", items).toString();
+    private static Response response(okhttp3.Request request, String finish, List<String> translations) throws Exception {
+        String content = ChatCompletionAdapterTest.markerReply(translations);
         String body = new JSONObject().put("choices", new JSONArray().put(new JSONObject().put("finish_reason", finish)
                 .put("message", new JSONObject().put("content", content)))).toString();
         return new Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("synthetic")
@@ -422,13 +454,17 @@ public class CaptionFrozenNeighborContextTest {
         final CaptionSession session = new CaptionSession();
         final CaptionSession.Track track = session.selectTrack(0, null);
         final Queue queue = new Queue();
-        final List<JSONObject> inputs = new ArrayList<>();
+        final List<ChatCompletionAdapterTest.ParsedRequest> inputs = new ArrayList<>();
         final TranslationCoordinator engine;
         final TranslationCoordinator.Profile profile;
         long now;
         Runnable beforeResponse;
 
         Harness(int items, int contextBudget, String global, int entries, int characters, long ttl, long lookAhead, String cues) {
+            this(items, 10000, contextBudget, global, entries, characters, ttl, lookAhead, cues);
+        }
+
+        Harness(int items, int sourceBudget, int contextBudget, String global, int entries, int characters, long ttl, long lookAhead, String cues) {
             replace(cues);
             ChatTranslationClient client = new ChatTranslationClient(new OkHttpClient.Builder()
                     .dns(host -> { throw new AssertionError("No network"); })
@@ -436,7 +472,7 @@ public class CaptionFrozenNeighborContextTest {
                         try {
                             Buffer buffer = new Buffer();
                             chain.request().body().writeTo(buffer);
-                            JSONObject data = input(buffer.readByteArray());
+                            ChatCompletionAdapterTest.ParsedRequest data = input(buffer.readByteArray());
                             inputs.add(data);
                             Runnable action = beforeResponse;
                             beforeResponse = null;
@@ -450,7 +486,7 @@ public class CaptionFrozenNeighborContextTest {
                 public String getKey() { return "synthetic-context-key"; }
             };
             profile = new TranslationCoordinator.Profile(wire(), owner, 0, null, "zh", global,
-                    new TranslationBatch.Limits(items, 10000, contextBudget, 10000), 1);
+                    new TranslationBatch.Limits(items, sourceBudget, contextBudget, 10000), 1);
             engine = new TranslationCoordinator(session, () -> now, queue, (batch, configuration) -> {
                 assertFalse(Thread.holdsLock(session));
                 ChatTranslationClient.Job job = client.newJob(batch, configuration.wire, configuration.credentials, configuration.maxCalls);
@@ -477,14 +513,14 @@ public class CaptionFrozenNeighborContextTest {
         }
         void start(long position) { enableWithoutDraining(position); queue.drain(); }
         void tick(long position, boolean seek) { engine.tick(position, seek); queue.drain(); }
-        JSONObject lastInputFor(String source) throws Exception {
+        ChatCompletionAdapterTest.ParsedRequest lastInputFor(String source) {
             for (int i = inputs.size() - 1; i >= 0; i--) {
-                JSONArray items = inputs.get(i).getJSONArray("items");
-                for (int j = 0; j < items.length(); j++) {
-                    if (source.equals(items.getJSONObject(j).getString("source"))) return items.getJSONObject(j);
-                }
+                if (inputs.get(i).sources.contains(source)) return inputs.get(i);
             }
             throw new AssertionError("No encoded source: " + source);
+        }
+        String lastContextFor(String source) {
+            return lastInputFor(source).combinedContext();
         }
         public void close() { engine.close(); session.close(); }
     }

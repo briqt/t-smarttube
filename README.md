@@ -8,7 +8,7 @@ the upstream download links in the preserved documentation below install the ori
 ## Subtitle enhancement
 
 - Enable bilingual subtitles per channel directly in the player subtitle menu, or configure global defaults under **Settings -> Subtitles**.
-- Choose the global target language from common presets (or enter a custom language code) and select original-top, translation-top, or translation-only display.
+- Choose the global target language from common presets (or enter a custom language code), set subtitles per batch (default `8`), and select original-top, translation-top, or translation-only display.
 - Configure an OpenAI-compatible or native model connection with **API URL**, **Model ID**, and **API Key**; advanced options stay collapsed by default.
 - Existing subtitle selection, NONE, styling, size and position controls remain available. Turning AI off restores the native subtitle path.
 - Translation uses available text captions; it does not upload audio or create captions for videos without them. Unsupported or incomplete enhancement results fall back to native captions.
@@ -24,7 +24,7 @@ API keys are not included in APKs and are write-only in the connection editor. P
 - Automatic rules match conservative, exact model IDs, not every model name or snapshot. See [the current rule set](common/src/main/java/com/liskovsoft/smartyoutubetv2/common/subtitle/translation/CaptionModelPolicy.java). A requested control or omitted reasoning text is not proof of zero internal reasoning or zero reasoning charges.
 - Existing connections keep their protocol, thinking choice and stored Key. Changing the endpoint, service or workspace requires replacing or explicitly clearing the Key; it is never silently forwarded to a new target.
 
-When channel translation is enabled, caption text and bounded neighboring caption context are sent directly to the configured model service. Audio is not uploaded. Provider processing and retention depend on that service's policies. Removing the connection removes its saved connection details and Key; the separate display preferences remain. The preserved `PRIVACY.md` applies only to upstream's F-Droid build, not to these fork-specific model connections.
+When channel translation is enabled, caption text, bounded neighboring caption context, and the current video's title/channel metadata are sent directly to the configured model service. Audio is not uploaded. Provider processing and retention depend on that service's policies. Removing the connection removes its saved connection details and Key; the separate display preferences remain. The preserved `PRIVACY.md` applies only to upstream's F-Droid build, not to these fork-specific model connections.
 
 The new protocols have synthetic request/response and credential-storage coverage. They have not all been exercised against real services or on every Android/TV device.
 

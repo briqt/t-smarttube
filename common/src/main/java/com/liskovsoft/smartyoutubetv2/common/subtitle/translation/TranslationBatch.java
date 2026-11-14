@@ -6,7 +6,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /** Immutable request items from one exact plan. IDs are local, never persistent cache identities. */
@@ -32,20 +31,19 @@ public final class TranslationBatch {
         public final String id;
         public final int groupIndex;
         public final String source;
-        /** Frozen data for this item only; recovery subsets reuse this exact immutable value. */
-        public final String context;
 
-        private Item(int groupIndex, String source, String context) {
+        private Item(int groupIndex, String source) {
             this.groupIndex = groupIndex;
             id = "g" + groupIndex;
             this.source = source;
-            this.context = context;
         }
     }
 
     public final String sourceLanguage;
     public final String targetLanguage;
     public final String context;
+    public final List<String> priorLines;
+    public final String nextLine;
     public final Limits limits;
     private final SemanticGroupPlanner.Plan mPlan;
     private final List<Item> mItems;
@@ -53,31 +51,39 @@ public final class TranslationBatch {
     /** Language/context are explicit caller inputs, not inferred from metadata or display names. */
     public TranslationBatch(SemanticGroupPlanner.Plan plan, List<Integer> indices, String sourceLanguage,
                             String targetLanguage, String context, Limits limits) {
-        this(plan, indices, sourceLanguage, targetLanguage, context, limits, Collections.emptyMap());
+        this(plan, indices, sourceLanguage, targetLanguage, context, limits, Collections.emptyList(), "");
     }
 
-    /** Worker-prepared local contexts. The budget counts every actually sent copy, including labels. */
+    /** Worker-prepared batch reference context. The budget counts video context plus reference lines once per batch. */
     TranslationBatch(SemanticGroupPlanner.Plan plan, List<Integer> indices, String sourceLanguage,
-                     String targetLanguage, String context, Limits limits, Map<Integer, String> localContexts) {
-        if (plan == null || indices == null || limits == null || localContexts == null || indices.size() > limits.items ||
+                     String targetLanguage, String context, Limits limits, List<String> priorLines, String nextLine) {
+        if (plan == null || indices == null || limits == null || priorLines == null || indices.size() > limits.items ||
                 !language(targetLanguage) || sourceLanguage != null && !language(sourceLanguage) || context == null || !validText(context) ||
                 context.codePointCount(0, context.length()) > limits.contextCodePoints) throw invalid();
+        int contextCharacters = context.codePointCount(0, context.length());
+        List<String> prior = new ArrayList<>(priorLines.size());
+        for (String line : priorLines) {
+            if (line == null || line.length() > 2L * limits.contextCodePoints || !validText(line)) throw invalid();
+            int points = line.codePointCount(0, line.length());
+            if (points > limits.contextCodePoints - contextCharacters) throw invalid();
+            contextCharacters += points;
+            prior.add(line);
+        }
+        String normalizedNext = nextLine == null ? "" : nextLine;
+        if (normalizedNext.length() > 2L * limits.contextCodePoints || !validText(normalizedNext)) throw invalid();
+        int nextPoints = normalizedNext.codePointCount(0, normalizedNext.length());
+        if (nextPoints > limits.contextCodePoints - contextCharacters) throw invalid();
+
         List<Item> items = new ArrayList<>();
         Set<Integer> seen = new HashSet<>();
         int characters = 0;
-        int contextCharacters = context.codePointCount(0, context.length());
         for (Integer index : indices) {
             if (index == null || index < 0 || index >= plan.getGroups().size() || !seen.add(index)) throw invalid();
             String source = plan.getText(index);
             characters += source.codePointCount(0, source.length());
             if (characters > limits.sourceCodePoints) throw invalid();
-            String local = localContexts.containsKey(index) ? localContexts.get(index) : "";
-            if (local == null || local.length() > 2L * limits.contextCodePoints || !validText(local)) throw invalid();
             if (hasContent(source)) {
-                int localPoints = local.codePointCount(0, local.length());
-                if (localPoints > limits.contextCodePoints - contextCharacters) throw invalid();
-                contextCharacters += localPoints;
-                items.add(new Item(index, source, local));
+                items.add(new Item(index, source));
             }
         }
         mPlan = plan;
@@ -85,6 +91,8 @@ public final class TranslationBatch {
         this.sourceLanguage = sourceLanguage;
         this.targetLanguage = targetLanguage;
         this.context = context;
+        this.priorLines = Collections.unmodifiableList(prior);
+        this.nextLine = normalizedNext;
         this.limits = limits;
     }
 
@@ -94,6 +102,11 @@ public final class TranslationBatch {
         sourceLanguage = parent.sourceLanguage;
         targetLanguage = parent.targetLanguage;
         context = parent.context;
+        boolean headMatches = !items.isEmpty() && !parent.mItems.isEmpty() && items.get(0) == parent.mItems.get(0);
+        boolean tailMatches = !items.isEmpty() && !parent.mItems.isEmpty()
+                && items.get(items.size() - 1) == parent.mItems.get(parent.mItems.size() - 1);
+        priorLines = headMatches ? parent.priorLines : Collections.emptyList();
+        nextLine = tailMatches ? parent.nextLine : "";
         limits = parent.limits;
     }
 

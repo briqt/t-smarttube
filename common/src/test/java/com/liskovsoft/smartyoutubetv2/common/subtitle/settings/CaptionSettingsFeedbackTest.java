@@ -97,6 +97,46 @@ public class CaptionSettingsFeedbackTest {
             assertEquals("ja", h.preferences.load().preferences.global.targetLanguage);
         }
     }
+    @Test public void batchSizeAckFailureAndRecoveryShowOnBatchSizeRowWithoutPoisoningTarget() throws Exception {
+        try (Harness h = new Harness()) {
+            String initialTargetTitle = h.targetTitle();
+            h.failCommit = true;
+            h.customBatchSize("12");
+            assertTrue(h.batchSizeTitle().contains("12"));
+            assertTrue(h.batchSizeTitle().contains(h.text(R.string.caption_ai_saving)));
+            assertEquals(initialTargetTitle, h.targetTitle());
+            h.work();
+            assertTrue(h.batchSizeTitle().contains("12"));
+            assertTrue(h.batchSizeTitle().contains(h.text(R.string.caption_ai_save_failed)));
+            assertFalse(h.preferences.load().valid);
+            assertEquals(initialTargetTitle, h.targetTitle());
+
+            h.failCommit = false;
+            h.customBatchSize("12");
+            assertTrue(h.batchSizeTitle().contains(h.text(R.string.caption_ai_saving)));
+            h.work();
+            assertTrue(h.batchSizeTitle().contains("12"));
+            assertFalse(h.batchSizeTitle().contains(h.text(R.string.caption_ai_saving)));
+            assertFalse(h.batchSizeTitle().contains(h.text(R.string.caption_ai_save_failed)));
+            assertEquals(12, h.preferences.load().preferences.global.batchSize);
+            assertEquals(initialTargetTitle, h.targetTitle());
+            assertEquals(0, h.menu.shows);
+
+            // Fail target commit, then recover via batch size write: both global rows clear failed status.
+            h.failCommit = true;
+            h.presetTarget(3); // ja
+            h.work();
+            assertTrue(h.targetTitle().contains(h.text(R.string.caption_ai_save_failed)));
+            h.failCommit = false;
+            h.customBatchSize("16");
+            h.work();
+            assertFalse("Target failure banner must clear once full global state commits",
+                    h.targetTitle().contains(h.text(R.string.caption_ai_save_failed)));
+            assertFalse(h.batchSizeTitle().contains(h.text(R.string.caption_ai_save_failed)));
+            assertEquals("ja", h.preferences.load().preferences.global.targetLanguage);
+            assertEquals(16, h.preferences.load().preferences.global.batchSize);
+        }
+    }
     @Test public void globalConnectionCanOpenAndSaveAcrossSourceChangesWhileChannelTokensExpire() throws Exception {
         try (Harness h = new Harness()) {
             Object channelToken = h.controller.menuToken();
@@ -302,7 +342,17 @@ public class CaptionSettingsFeedbackTest {
         String text(int id) { return menu.context.getString(id); }
         OptionItem button(int title) { return menu.buttons.stream().filter(item -> item.getTitle().toString().startsWith(text(title))).findFirst().get(); }
         String targetTitle() { return menu.titles.get(button(R.string.caption_ai_target)); }
+        String batchSizeTitle() { return menu.titles.get(button(R.string.caption_ai_batch_size)); }
         String connectionTitle() { return menu.titles.get(button(R.string.caption_ai_connection)); }
+        void customBatchSize(String value) {
+            button(R.string.caption_ai_batch_size).onSelect(true); drain();
+            AlertDialog picker = (AlertDialog) ShadowDialog.getLatestDialog();
+            int customIndex = picker.getListView().getCount() - 1;
+            picker.getListView().performItemClick(picker.getListView().getAdapter().getView(customIndex, null, picker.getListView()), customIndex, customIndex);
+            drain();
+            AlertDialog dialog = (AlertDialog) ShadowDialog.getLatestDialog();
+            fill(dialog, R.id.simple_edit_value, value); ok(dialog);
+        }
         void drain() { org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle(); }
         void work() { worker.next(); drain(); }
         void presetTarget(int index) {

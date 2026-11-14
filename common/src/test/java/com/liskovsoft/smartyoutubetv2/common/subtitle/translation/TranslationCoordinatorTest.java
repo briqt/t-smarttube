@@ -693,6 +693,169 @@ public class TranslationCoordinatorTest {
         assertEquals("Suppression is bounded by its original TTL, not permanent", 2, h.calls);
     }
 
+    @Test
+    public void coldStartRampThenSteadyStateWatermarkAndTailCompletion() {
+        StringBuilder cues = new StringBuilder();
+        for (int i = 0; i < 30; i++) {
+            int start = 1 + 2 * i;
+            int end = start + 1;
+            cues.append(String.format(java.util.Locale.US, "%02d:%02d.000 --> %02d:%02d.000\na%d\n\n",
+                    start / 60, start % 60, end / 60, end % 60, i));
+        }
+        TranslationCoordinator.Limits ramped = new TranslationCoordinator.Limits(
+                300_000_000L, 64, 65536, 60_000L, 2, 50, 50, 4, 3);
+        Harness h = new Harness(ramped, "a0");
+        h.replace(cues.toString());
+        h.enable("zh", 8, 1_000_000);
+        h.queue.drain();
+        assertEquals("Cold start prefetches [4, 4, 4] to reach 12 cues", 3, h.calls);
+        assertEquals(4, h.ids.get(0).size());
+        assertEquals(4, h.ids.get(1).size());
+        assertEquals(4, h.ids.get(2).size());
+
+        h.engine.tick(5_000_000, false); // cue 2: 10 handled ahead (>= 8)
+        h.queue.drain();
+        assertEquals("No extra request while contiguous handled >= batchSize", 3, h.calls);
+
+        h.engine.tick(11_000_000, false); // cue 5: 7 handled ahead (< 8) -> steady batch of 8 (12..19)
+        h.queue.drain();
+        assertEquals(4, h.calls);
+        assertEquals(8, h.ids.get(3).size());
+
+        h.engine.tick(25_000_000, false); // cue 12: 8 handled ahead (>= 8)
+        h.queue.drain();
+        assertEquals(4, h.calls);
+
+        h.engine.tick(27_000_000, false); // cue 13: 7 handled ahead (< 8) -> steady batch of 8 (20..27)
+        h.queue.drain();
+        assertEquals(5, h.calls);
+        assertEquals(8, h.ids.get(4).size());
+
+        h.engine.tick(43_000_000, false); // cue 21: 7 handled ahead (< 8) -> tail batch of 2 (28..29)
+        h.queue.drain();
+        assertEquals(6, h.calls);
+        assertEquals(2, h.ids.get(5).size());
+
+        h.engine.tick(57_000_000, false); // cue 28: remaining cues already handled
+        h.queue.drain();
+        assertEquals("Zero requests once all remaining cues are handled", 6, h.calls);
+    }
+
+    @Test
+    public void cachedSeekPreservesWatermarkWhileUncachedSeekResetsColdStartRamp() {
+        StringBuilder cues = new StringBuilder();
+        for (int i = 0; i < 36; i++) {
+            int start = 1 + 2 * i;
+            int end = start + 1;
+            cues.append(String.format(java.util.Locale.US, "%02d:%02d.000 --> %02d:%02d.000\nb%d\n\n",
+                    start / 60, start % 60, end / 60, end % 60, i));
+        }
+        TranslationCoordinator.Limits ramped = new TranslationCoordinator.Limits(
+                300_000_000L, 64, 65536, 60_000L, 2, 50, 50, 4, 3);
+        Harness h = new Harness(ramped, "b0");
+        h.replace(cues.toString());
+        h.enable("zh", 8, 1_000_000);
+        h.queue.drain();
+        assertEquals(3, h.calls);
+
+        // Seek into cached region with 7 handled ahead (cues 5..11): stays in steady-state batchSize=8.
+        h.engine.tick(11_000_000, true);
+        h.queue.drain();
+        assertEquals(4, h.calls);
+        assertEquals(8, h.ids.get(3).size());
+
+        // Seek back within cached window: no new request needed.
+        h.engine.tick(7_000_000, true);
+        h.queue.drain();
+        assertEquals(4, h.calls);
+
+        // Uncached forward seek (cue 22, 0 contiguous handled): resets [4, 4, 4] ramp.
+        h.engine.tick(45_000_000, true);
+        h.queue.drain();
+        assertEquals(7, h.calls);
+        assertEquals(4, h.ids.get(4).size());
+        assertEquals(4, h.ids.get(5).size());
+        assertEquals(4, h.ids.get(6).size());
+    }
+
+    @Test
+    public void productionFactoryDisablesAutomaticBoundaryRefinerByDefault() throws Exception {
+        TranslationCoordinator coordinator = TranslationCoordinator.create(new CaptionSession(), () -> 0L,
+                new TranslationCoordinator.Limits(300_000_000L, 64, 65536, 60_000L, 2, 50, 20, 4, 3));
+        try {
+            java.lang.reflect.Field field = TranslationCoordinator.class.getDeclaredField("mBoundaryRefiner");
+            field.setAccessible(true);
+            assertNull(field.get(coordinator));
+        } finally {
+            coordinator.close();
+        }
+    }
+
+    @Test
+    public void oversizedInteriorCueSplitsBatchesInsteadOfMergingNonAdjacentCues() {
+        Harness mixed = new Harness(new TranslationCoordinator.Limits(60_000_000L, 64, 65536, 60_000L, 2, 50, 50, 4, 3),
+                "zero", "aaaaaaaaaaaaaaa", "two");
+        TranslationCoordinator.Profile shortLimit = new TranslationCoordinator.Profile(
+                config(), () -> "synthetic-fixture-key", 0, "en", "zh", "",
+                new TranslationBatch.Limits(8, 5, 0, 1000), 1);
+        mixed.engine.tick(1_000_000, false);
+        mixed.engine.configure(shortLimit);
+        mixed.engine.setVisible(true);
+        mixed.engine.setRequesting(true);
+        mixed.queue.drain();
+        assertEquals(2, mixed.calls);
+        assertEquals(java.util.Collections.singletonList("g0"), mixed.ids.get(0));
+        assertEquals(java.util.Collections.singletonList("g2"), mixed.ids.get(1));
+        assertEquals("zh-g0", mixed.engine.prepareFrame().items.get(0).translation);
+        mixed.engine.tick(21_000_000, false);
+        assertEquals("zh-g2", mixed.engine.prepareFrame().items.get(0).translation);
+    }
+
+    @Test
+    public void partialReplyWithMiddleGapSplitsMissingItemsIntoContiguousRuns() throws Exception {
+        RawTimeline raw = RawWebvttParser.parse(
+                ("WEBVTT\n\n00:01.000 --> 00:02.000\nc0\n\n00:03.000 --> 00:04.000\nc1\n\n"
+                        + "00:05.000 --> 00:06.000\nc2\n\n00:07.000 --> 00:08.000\nc3\n\n").getBytes(utf8()),
+                0, new RawTimeline.Limits(4096, 16, 128));
+        SemanticGroupPlanner.Plan plan = SemanticGroupPlanner.preserve(
+                MappedTranscript.fromRaw(raw, 128), new SemanticGroupPlanner.Limits(16, 128, 128));
+        TranslationBatch batch = new TranslationBatch(plan, Arrays.asList(0, 1, 2, 3), "en", "zh", "",
+                new TranslationBatch.Limits(8, 1000, 1000, 1000));
+        List<List<String>> requestedSources = new ArrayList<>();
+        ChatTranslationClient client = new ChatTranslationClient(new OkHttpClient.Builder().addInterceptor(chain -> {
+            try {
+                Buffer buffer = new Buffer();
+                chain.request().body().writeTo(buffer);
+                ChatCompletionAdapterTest.ParsedRequest req = ChatCompletionAdapterTest.parseRequest(
+                        BoundedJson.object(buffer.readUtf8()));
+                requestedSources.add(req.sources);
+                String reply;
+                if (requestedSources.size() == 1) {
+                    reply = "[[p1]]\nt1\n[[end]]"; // Complete interior g1 only -> g0 and [g2, g3] are disjoint runs.
+                } else {
+                    List<String> out = new ArrayList<>();
+                    for (String s : req.sources) out.add("t-" + s);
+                    reply = ChatCompletionAdapterTest.markerReply(out);
+                }
+                return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                        .code(200).message("synthetic")
+                        .body(ResponseBody.create(MediaType.parse("application/json"), envelope("stop", reply, null)))
+                        .build();
+            } catch (Exception e) { throw new AssertionError(e); }
+        }).build());
+        ChatTranslationClient.Result result = client.newJob(batch, config(), () -> "synthetic-key", 4).execute();
+        assertEquals(ChatTranslationClient.Status.COMPLETE, result.status);
+        assertEquals(4, requestedSources.size());
+        assertEquals(Arrays.asList("c0", "c1", "c2", "c3"), requestedSources.get(0));
+        assertEquals(Arrays.asList("c0"), requestedSources.get(1));
+        assertEquals(Arrays.asList("c2"), requestedSources.get(2));
+        assertEquals(Arrays.asList("c3"), requestedSources.get(3));
+        assertEquals("t-c0", result.translations.get("g0"));
+        assertEquals("t1", result.translations.get("g1"));
+        assertEquals("t-c2", result.translations.get("g2"));
+        assertEquals("t-c3", result.translations.get("g3"));
+    }
+
     /** Cross-package UI fixture: real protocol/transport classes, intercepted before any DNS/network call. */
     public static TranslationCoordinator uiFixture(CaptionSession session, TranslationCoordinator.Clock clock,
             Executor executor, java.util.concurrent.atomic.AtomicInteger calls) {
@@ -716,15 +879,12 @@ public class TranslationCoordinatorTest {
                 Buffer bytes = new Buffer();
                 chain.request().body().writeTo(bytes);
                 JSONObject body = BoundedJson.object(bytes.readUtf8());
-                JSONObject input = BoundedJson.object(body.getJSONArray("messages").getJSONObject(1).getString("content"));
-                JSONArray translated = new JSONArray();
-                JSONArray items = input.getJSONArray("items");
-                for (int i = 0; i < items.length(); i++) {
-                    JSONObject item = items.getJSONObject(i);
-                    translated.put(new JSONObject().put("id", item.getString("id")).put("text",
-                            translation.apply(input.getString("target_language"), item.getString("source"))));
+                ChatCompletionAdapterTest.ParsedRequest req = ChatCompletionAdapterTest.parseRequest(body);
+                List<String> translated = new ArrayList<>();
+                for (String source : req.sources) {
+                    translated.add(translation.apply(req.targetLanguage, source));
                 }
-                byte[] response = envelope("stop", new JSONObject().put("translations", translated).toString(), null);
+                byte[] response = envelope("stop", ChatCompletionAdapterTest.markerReply(translated), null);
                 Runnable action = beforeResponse.getAndSet(null);
                 if (action != null) action.run();
                 return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("fixture")
@@ -812,20 +972,29 @@ public class TranslationCoordinatorTest {
                         Buffer buffer = new Buffer();
                         chain.request().body().writeTo(buffer);
                         JSONObject body = BoundedJson.object(buffer.readUtf8());
-                        JSONObject input = BoundedJson.object(body.getJSONArray("messages").getJSONObject(1).getString("content"));
-                        String target = input.getString("target_language");
+                        ChatCompletionAdapterTest.ParsedRequest req = ChatCompletionAdapterTest.parseRequest(body);
+                        String target = req.targetLanguage;
                         languages.add(target);
-                        JSONArray items = input.getJSONArray("items");
+                        List<TranslationBatch.Item> batchItems = batch.getItems();
+                        assertEquals(batchItems.size(), req.sources.size());
                         List<String> requested = new ArrayList<>();
-                        for (int i = 0; i < items.length(); i++) requested.add(items.getJSONObject(i).getString("id"));
+                        for (int i = 0; i < batchItems.size(); i++) {
+                            TranslationBatch.Item item = batchItems.get(i);
+                            assertEquals(item.source, req.sources.get(i));
+                            requested.add(item.id);
+                        }
                         ids.add(requested);
                         Runnable action = onHttp; onHttp = null;
                         if (action != null) action.run();
-                        JSONArray output = new JSONArray();
-                        for (int i = 0; i < requested.size() - (omitLast ? 1 : 0); i++) {
-                            output.put(new JSONObject().put("id", requested.get(i)).put("text", translation == null ? target + "-" + requested.get(i) : translation));
+                        List<String> output = new ArrayList<>();
+                        for (int i = 0; i < requested.size(); i++) {
+                            if (omitLast && i == requested.size() - 1) {
+                                output.add(null);
+                            } else {
+                                output.add(translation == null ? target + "-" + requested.get(i) : translation);
+                            }
                         }
-                        byte[] data = envelope(reason, new JSONObject().put("translations", output).toString(), null);
+                        byte[] data = envelope(reason, ChatCompletionAdapterTest.markerReply(output), null);
                         Response.Builder response = new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
                                 .code(httpCode).message("synthetic").body(ResponseBody.create(MediaType.parse("application/json"), data));
                         if (retryAfter != null) response.header("Retry-After", retryAfter);

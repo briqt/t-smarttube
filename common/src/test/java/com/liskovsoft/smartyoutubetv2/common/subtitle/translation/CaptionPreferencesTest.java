@@ -55,6 +55,31 @@ public class CaptionPreferencesTest {
         invalid(() -> new CaptionPreferences.Channel(true, null, CaptionSource.TextKind.ASR_CANDIDATE));
         invalid(() -> new CaptionPreferences.Global("zh", NativeCueComposer.Mode.BILINGUAL,
                 NativeCueComposer.Order.ORIGINAL_FIRST, "https://example.invalid/key"));
+        invalid(() -> new CaptionPreferences.Global("zh", NativeCueComposer.Mode.BILINGUAL,
+                NativeCueComposer.Order.ORIGINAL_FIRST, "connection-main", 0));
+        invalid(() -> new CaptionPreferences.Global("zh", NativeCueComposer.Mode.BILINGUAL,
+                NativeCueComposer.Order.ORIGINAL_FIRST, "connection-main", 33));
+    }
+
+    @Test
+    public void batchSizeDefaultsValidatesBoundsAndPreservesSemanticEquality() {
+        CaptionPreferences.Global fourArg = new CaptionPreferences.Global("zh", NativeCueComposer.Mode.BILINGUAL,
+                NativeCueComposer.Order.ORIGINAL_FIRST, "connection-main");
+        CaptionPreferences.Global fiveArg = new CaptionPreferences.Global("zh", NativeCueComposer.Mode.BILINGUAL,
+                NativeCueComposer.Order.ORIGINAL_FIRST, "connection-main", CaptionPreferences.Global.DEFAULT_BATCH_SIZE);
+        assertEquals(8, fourArg.batchSize);
+        assertTrue(fourArg.hasSameRequestSettings(fiveArg));
+        assertTrue(fourArg.hasSamePresentation(fiveArg));
+
+        CaptionPreferences.Global min = new CaptionPreferences.Global("zh", NativeCueComposer.Mode.BILINGUAL,
+                NativeCueComposer.Order.ORIGINAL_FIRST, "connection-main", CaptionPreferences.Global.MIN_BATCH_SIZE);
+        CaptionPreferences.Global max = new CaptionPreferences.Global("zh", NativeCueComposer.Mode.BILINGUAL,
+                NativeCueComposer.Order.ORIGINAL_FIRST, "connection-main", CaptionPreferences.Global.MAX_BATCH_SIZE);
+        assertEquals(1, min.batchSize);
+        assertEquals(32, max.batchSize);
+        assertFalse("Batch size change updates bridge profile request settings", fourArg.hasSameRequestSettings(max));
+        assertTrue(fourArg.hasSamePresentation(max));
+        assertFalse(fourArg.hasSameRequestSettings(global("ja", NativeCueComposer.Mode.BILINGUAL, NativeCueComposer.Order.ORIGINAL_FIRST)));
     }
 
     static CaptionPreferences.Global global(String target, NativeCueComposer.Mode mode, NativeCueComposer.Order order) {

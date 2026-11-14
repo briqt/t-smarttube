@@ -10,32 +10,47 @@ import java.util.Map;
 /** Two user-setting layers. Native font/background/placement remain owned by the original player. */
 public final class CaptionPreferences {
     public static final class Global {
+        public static final int DEFAULT_BATCH_SIZE = 8;
+        public static final int MIN_BATCH_SIZE = 1;
+        public static final int MAX_BATCH_SIZE = 32;
+
         public final String targetLanguage;
         public final NativeCueComposer.Mode mode;
         public final NativeCueComposer.Order order;
         /** Reference to globally managed connection/request options, never an endpoint, Key or channel override. */
         public final String connectionId;
+        public final int batchSize;
 
         public Global(String targetLanguage, NativeCueComposer.Mode mode, NativeCueComposer.Order order, String connectionId) {
+            this(targetLanguage, mode, order, connectionId, DEFAULT_BATCH_SIZE);
+        }
+
+        public Global(String targetLanguage, NativeCueComposer.Mode mode, NativeCueComposer.Order order, String connectionId, int batchSize) {
             if (targetLanguage != null && !TranslationBatch.language(targetLanguage) || mode == null || order == null ||
-                    connectionId != null && !identifier(connectionId)) throw invalid();
+                    connectionId != null && !identifier(connectionId) || !validBatchSize(batchSize)) throw invalid();
             this.targetLanguage = targetLanguage;
             this.mode = mode;
             this.order = order;
             this.connectionId = connectionId;
+            this.batchSize = batchSize;
         }
 
         public boolean hasSameRequestSettings(Global other) {
-            return other != null && equal(targetLanguage, other.targetLanguage) && equal(connectionId, other.connectionId);
+            return other != null && equal(targetLanguage, other.targetLanguage) && equal(connectionId, other.connectionId)
+                    && batchSize == other.batchSize;
         }
 
         public boolean hasSamePresentation(Global other) {
             return other != null && mode == other.mode && order == other.order;
         }
 
+        public static boolean validBatchSize(int batchSize) {
+            return batchSize >= MIN_BATCH_SIZE && batchSize <= MAX_BATCH_SIZE;
+        }
+
         public static Global defaults() {
             // No target language/connection is guessed and no paid request is enabled by a display default.
-            return new Global(null, NativeCueComposer.Mode.BILINGUAL, NativeCueComposer.Order.ORIGINAL_FIRST, null);
+            return new Global(null, NativeCueComposer.Mode.BILINGUAL, NativeCueComposer.Order.ORIGINAL_FIRST, null, DEFAULT_BATCH_SIZE);
         }
     }
 

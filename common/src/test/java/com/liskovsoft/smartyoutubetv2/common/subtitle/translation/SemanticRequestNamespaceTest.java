@@ -74,6 +74,26 @@ public class SemanticRequestNamespaceTest {
     }
 
     @Test
+    public void changingBatchSizePreservesRequestSemanticsAndReusesCompletedText() throws Exception {
+        try (Harness h = new Harness()) {
+            TranslationCoordinator.Frame first = h.completeThenReconfigureEqualProfile();
+            TranslationCoordinator.Profile unchanged = h.currentProfile;
+            TranslationCoordinator.Profile resized = new TranslationCoordinator.Profile(
+                    h.wire, h.owner, unchanged.credentialRevision, SOURCE_LANGUAGE, TARGET_LANGUAGE, CONTEXT,
+                    new TranslationBatch.Limits(16, 256, 128, 1024), 1);
+            assertArrayEquals("Batch item count must not fragment semantic request cache keys",
+                    unchanged.semantics, resized.semantics);
+            h.engine.configure(resized);
+            h.currentProfile = resized;
+            h.queue.drain();
+            TranslationCoordinator.Frame second = h.frame();
+            assertNotSame(first, second);
+            assertEquals(displayText(sentinel(SOURCE_LANGUAGE, TARGET_LANGUAGE, CONTEXT, SOURCE)), h.display(second));
+            assertEquals(1, h.httpCalls);
+        }
+    }
+
+    @Test
     public void sourceLanguageAloneMissesAndDisplaysItsFinalBodySentinel() throws Exception {
         assertChangedNamespace(Dimension.SOURCE_LANGUAGE, false);
     }
@@ -208,7 +228,7 @@ public class SemanticRequestNamespaceTest {
                 ChatCompletionAdapter.Thinking.OMIT);
         final TranslationBatch.Limits batchLimits = new TranslationBatch.Limits(2, 256, 128, 1024);
         final Queue queue = new Queue();
-        final List<JSONObject> encodedInputs = new ArrayList<>();
+        final List<ChatCompletionAdapterTest.ParsedRequest> encodedInputs = new ArrayList<>();
         final ChatTranslationClient client;
         final TranslationCoordinator engine;
         final CaptionSession.Snapshot snapshot;
@@ -232,20 +252,14 @@ public class SemanticRequestNamespaceTest {
                             chain.request().body().writeTo(buffer);
                             JSONObject body = BoundedJson.object(buffer.readUtf8());
                             assertEquals(wire.model, body.getString("model"));
-                            JSONArray messages = body.getJSONArray("messages");
-                            assertEquals("system", messages.getJSONObject(0).getString("role"));
-                            assertEquals("user", messages.getJSONObject(1).getString("role"));
-                            JSONObject input = BoundedJson.object(messages.getJSONObject(1).getString("content"));
-                            encodedInputs.add(input);
-                            JSONArray translations = new JSONArray();
-                            JSONArray items = input.getJSONArray("items");
-                            for (int i = 0; i < items.length(); i++) {
-                                JSONObject item = items.getJSONObject(i);
-                                translations.put(new JSONObject().put("id", item.getString("id")).put("text",
-                                        sentinel(input.getString("source_language"), input.getString("target_language"),
-                                                input.getString("context"), item.getString("source"))));
+                            ChatCompletionAdapterTest.ParsedRequest req = ChatCompletionAdapterTest.parseRequest(body);
+                            encodedInputs.add(req);
+                            List<String> translations = new ArrayList<>();
+                            for (String source : req.sources) {
+                                translations.add(sentinel(req.sourceLanguage, req.targetLanguage,
+                                        req.videoContext, source));
                             }
-                            String content = new JSONObject().put("translations", translations).toString();
+                            String content = ChatCompletionAdapterTest.markerReply(translations);
                             String envelope = new JSONObject().put("choices", new JSONArray().put(new JSONObject()
                                     .put("finish_reason", "stop")
                                     .put("message", new JSONObject().put("content", content)))).toString();
@@ -353,13 +367,12 @@ public class SemanticRequestNamespaceTest {
             return applied.get().get(0).text.toString();
         }
 
-        void assertEncodedInput(int index, String sourceLanguage, String targetLanguage, String context) throws Exception {
-            JSONObject input = encodedInputs.get(index);
-            assertEquals(sourceLanguage, input.getString("source_language"));
-            assertEquals(targetLanguage, input.getString("target_language"));
-            assertEquals(context, input.getString("context"));
-            assertEquals(1, input.getJSONArray("items").length());
-            assertEquals(SOURCE, input.getJSONArray("items").getJSONObject(0).getString("source"));
+        void assertEncodedInput(int index, String sourceLanguage, String targetLanguage, String context) {
+            ChatCompletionAdapterTest.ParsedRequest input = encodedInputs.get(index);
+            assertEquals(sourceLanguage, input.sourceLanguage);
+            assertEquals(targetLanguage, input.targetLanguage);
+            assertEquals(context, input.videoContext);
+            assertEquals(Collections.singletonList(SOURCE), input.sources);
         }
 
         @Override public void close() {

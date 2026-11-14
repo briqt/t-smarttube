@@ -200,6 +200,37 @@ public class CaptionPreferenceStoreTest {
         assertFalse(updated.preferences.channel("channel-a").translate);
     }
 
+    @Test
+    public void batchSizeRoundTripsAndLegacyFourKeyJsonDefaultsToEight() throws Exception {
+        CaptionPreferenceStore store = store("native-profile-batch");
+        CaptionPreferences.Global sixteen = new CaptionPreferences.Global("zh", NativeCueComposer.Mode.BILINGUAL,
+                NativeCueComposer.Order.ORIGINAL_FIRST, "connection-main", 16);
+        CaptionPreferenceStore.Snapshot saved = store.updateGlobal(store.load(), sixteen);
+        assertNotNull(saved);
+        store.close();
+
+        CaptionPreferenceStore.Snapshot reloaded = store("native-profile-batch").load();
+        assertTrue(reloaded.valid);
+        assertEquals(16, reloaded.preferences.global.batchSize);
+
+        String legacyJson = "{\"version\":1,\"revision\":\"4\",\"global\":{\"target\":\"ja\",\"mode\":\"BILINGUAL\"," +
+                "\"order\":\"ORIGINAL_FIRST\",\"connection\":\"connection-main\"},\"channels\":{}}";
+        raw("native-profile-batch").edit().putString("settings", legacyJson).commit();
+        CaptionPreferenceStore.Snapshot legacy = store("native-profile-batch").load();
+        assertTrue(legacy.valid);
+        assertEquals("ja", legacy.preferences.global.targetLanguage);
+        assertEquals(CaptionPreferences.Global.DEFAULT_BATCH_SIZE, legacy.preferences.global.batchSize);
+
+        for (String badValue : new String[]{"0", "33", "8.5", "\"8\"", "true", "null"}) {
+            String corrupt = "{\"version\":1,\"revision\":\"5\",\"global\":{\"target\":\"zh\",\"mode\":\"BILINGUAL\"," +
+                    "\"order\":\"ORIGINAL_FIRST\",\"connection\":\"connection-main\",\"batchSize\":" + badValue + "},\"channels\":{}}";
+            raw("native-profile-batch").edit().putString("settings", corrupt).commit();
+            CaptionPreferenceStore.Snapshot rejected = store("native-profile-batch").load();
+            assertFalse("Invalid batchSize " + badValue + " must fail load", rejected.valid);
+            assertEquals(corrupt, raw("native-profile-batch").getString("settings", null));
+        }
+    }
+
     private static Object invoke(java.lang.reflect.Method method, Object target, Object[] args) throws Throwable {
         try { return method.invoke(target, args); }
         catch (java.lang.reflect.InvocationTargetException exception) { throw exception.getCause(); }
