@@ -3,6 +3,10 @@ package com.liskovsoft.smartyoutubetv2.common.subtitle.translation;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.session.CaptionSession;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.presentation.NativeCueComposer;
 import com.google.android.exoplayer2.text.Cue;
+import com.liskovsoft.mediaserviceinterfaces.data.MediaSubtitle;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.source.CaptionSource;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.source.CaptionSourceClassifier;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.AsrTranscriptPlanner;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.MappedTranscript;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.RawTimeline;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.RawWebvttParser;
@@ -856,6 +860,46 @@ public class TranslationCoordinatorTest {
         assertEquals("t-c3", result.translations.get("g3"));
     }
 
+    @Test
+    public void resolvedPaintOnPrefetchesMidCueUpcomingGroupAndSkipsPassedEchoGroup() {
+        String vtt = "WEBVTT\n\n" +
+                "00:01.000 --> 00:04.000\n \nFirst part. <00:02.500>Second starts\n\n" +
+                "00:04.000 --> 00:04.010\nFirst part. Second starts\n\n" +
+                "00:04.010 --> 00:06.000\nFirst part. Second starts\nthird<00:05.000> part\n";
+        RawTimeline raw = RawWebvttParser.parse(vtt.getBytes(utf8()), 0, new RawTimeline.Limits(65536, 64, 256));
+        MediaSubtitle subtitle = (MediaSubtitle) java.lang.reflect.Proxy.newProxyInstance(
+                MediaSubtitle.class.getClassLoader(), new Class<?>[]{MediaSubtitle.class},
+                (proxy, method, args) -> "getBaseUrl".equals(method.getName())
+                        ? "https://example.invalid/timedtext?lang=en&kind=asr" : null);
+        CaptionSource source = CaptionSourceClassifier.classify(subtitle);
+        AsrTranscriptPlanner.Analysis analysis = AsrTranscriptPlanner.prepare(raw, source,
+                new RawTimeline.Limits(65536, 64, 256), new SemanticGroupPlanner.Limits(64, 256, 256));
+        assertTrue(analysis.normalized);
+        assertEquals(2, analysis.groups.getGroups().size());
+
+        Harness h = new Harness(new TranslationCoordinator.Limits(1_800_000, 3, 1000, 1000, 2, 50, 20), "unused");
+        CaptionSession.Track track = h.session.selectTrack(0, null);
+        assertTrue(h.session.accept(h.session.beginSample(track), analysis.raw, analysis.transcript, analysis.groups));
+
+        // 1) At 1.5s, G1 starts mid-cue at 2.5s (< 1.5s + 1.8s lookAhead), so both g0 and g1 prefetch together.
+        h.enable("zh", 2, 1_500_000);
+        h.queue.drain();
+        assertEquals(Arrays.asList("g0", "g1"), h.ids.get(0));
+        TranslationCoordinator.Frame earlyFrame = h.engine.prepareFrame();
+        assertEquals(1, earlyFrame.items.size());
+        assertEquals(0, earlyFrame.items.get(0).groupIndex);
+
+        // 2) At 2.6s (now in G1), retarget to French: passed G0 has future echo origins at 4.00s/4.01s,
+        //    which are inside the 1.8s look-ahead window, yet G0 must NOT be active or requeued.
+        h.engine.tick(2_600_000, false);
+        h.engine.configure(h.profile("fr", 1, 2));
+        h.queue.drain();
+        assertEquals(Collections.singletonList("g1"), h.ids.get(1));
+        TranslationCoordinator.Frame midFrame = h.engine.prepareFrame();
+        assertEquals(1, midFrame.items.size());
+        assertEquals(1, midFrame.items.get(0).groupIndex);
+    }
+
     /** Cross-package UI fixture: real protocol/transport classes, intercepted before any DNS/network call. */
     public static TranslationCoordinator uiFixture(CaptionSession session, TranslationCoordinator.Clock clock,
             Executor executor, java.util.concurrent.atomic.AtomicInteger calls) {
@@ -980,7 +1024,7 @@ public class TranslationCoordinatorTest {
                         List<String> requested = new ArrayList<>();
                         for (int i = 0; i < batchItems.size(); i++) {
                             TranslationBatch.Item item = batchItems.get(i);
-                            assertEquals(item.source, req.sources.get(i));
+                            assertEquals(CaptionLineNormalizer.normalize(item.source), req.sources.get(i));
                             requested.add(item.id);
                         }
                         ids.add(requested);

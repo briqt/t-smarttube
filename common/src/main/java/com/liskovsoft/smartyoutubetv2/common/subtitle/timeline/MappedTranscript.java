@@ -178,6 +178,10 @@ public final class MappedTranscript {
         return mSource == raw;
     }
 
+    RawTimeline source() {
+        return mSource;
+    }
+
     public List<Atom> getAtoms() {
         return mAtoms;
     }

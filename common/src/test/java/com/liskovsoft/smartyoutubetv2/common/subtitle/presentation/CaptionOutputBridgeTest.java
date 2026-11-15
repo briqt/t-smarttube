@@ -231,8 +231,8 @@ public class CaptionOutputBridgeTest {
                 boolean[] events = {true, false, true, true, false, true, true, false, true};
                 String lineB = "token2 token3 token4 token5 token6 token7 token8";
                 String lineC = "token9 token10 token11 token12 token13 token14";
-                String[] visible = {"[token1]\n提示一", "[token1]\n提示一", "[token1] " + lineB + "\n提示一第二至八项",
-                        lineB + "\n第二至八项", lineB + "\n第二至八项", lineB + " " + lineC + "\n第二至八项第九至十四项",
+                String[] visible = {"[token1]\n提示一", "[token1]\n提示一", lineB + "\n第二至八项",
+                        lineB + "\n第二至八项", lineB + "\n第二至八项", lineC + "\n第九至十四项",
                         lineC + "\n第九至十四项", lineC + "\n第九至十四项", ""};
                 for (int i = 0; i < positions.length; i++) {
                     h.positionMs = positions[i];
@@ -243,6 +243,57 @@ public class CaptionOutputBridgeTest {
                 }
                 assertEquals(Arrays.asList(aWire, bWire, c), sent);
                 assertEquals("Display holds and frame refreshes must not repay the three canonical source units", 1, h.calls.get());
+            } finally { output.release(); }
+        } finally { manager.release(); h.close(); }
+    }
+
+    @Test
+    public void asrMultiSentenceRollingTransitionsCleanlyViaPulseWithoutStacking() throws Exception {
+        String vtt = "WEBVTT\n\n" +
+                "00:00.100 --> 00:01.000 align:start position:0%\n\n" +
+                "00:01.000 --> 00:01.010 align:start position:0%\nFirst sentence ends.\n\n" +
+                "00:01.010 --> 00:04.000 align:start position:0%\nFirst sentence ends.\n" +
+                "Second<00:02.000> clause.<00:02.500> Third starts\n\n" +
+                "00:04.000 --> 00:04.010 align:start position:0%\nSecond clause. Third starts\n\n" +
+                "00:04.010 --> 00:06.000 align:start position:0%\nSecond clause. Third starts\nhere<00:05.000> now.\n\n" +
+                "00:06.000 --> 00:06.010 align:start position:0%\nhere now.\n";
+        Harness h = new Harness(false, vtt, (target, source) -> {
+            if ("First sentence ends.".equals(source)) return "第一句。";
+            if ("Second clause.".equals(source)) return "第二句。";
+            if (" Third starts here now.".equals(source)) return "第三句。";
+            throw new AssertionError("Unexpected source: " + source);
+        }, true);
+        h.view = new SubtitleView(RuntimeEnvironment.getApplication());
+        SubtitleManager manager = new SubtitleManager(h.view);
+        ReflectionHelpers.setField(manager, "mCaptionBridge", h.bridge);
+        try {
+            CaptionSession.Snapshot base = h.observation.getSession().getSnapshot();
+            assertEquals(1, base.transcript.normalizationVersion());
+            assertEquals(3, base.groups.getGroups().size());
+            SubtitleOutputBuffer output = nativeOutput(h);
+            try {
+                h.positionMs = 1000;
+                h.enable();
+                long[] positions = {1000, 1009, 1010, 2499, 2500, 4005, 4010, 6005, 6010};
+                boolean[] events = {true, false, true, false, false, true, true, true, true};
+                String[] visible = {
+                        "First sentence ends.\n第一句。",
+                        "First sentence ends.\n第一句。",
+                        "Second clause.\n第二句。",
+                        "Second clause.\n第二句。",
+                        " Third starts here now.\n第三句。",
+                        " Third starts here now.\n第三句。",
+                        " Third starts here now.\n第三句。",
+                        " Third starts here now.\n第三句。",
+                        ""
+                };
+                for (int i = 0; i < positions.length; i++) {
+                    h.positionMs = positions[i];
+                    if (events[i]) new CaptionCueDispatcher(h.observation, manager, null).onCues(output.getCues(positions[i] * 1000));
+                    h.worker.drain(); h.ui.pulse();
+                    if (visible[i].isEmpty()) assertTrue(h.last.isEmpty());
+                    else assertOneVisibleCue(h, visible[i]);
+                }
             } finally { output.release(); }
         } finally { manager.release(); h.close(); }
     }

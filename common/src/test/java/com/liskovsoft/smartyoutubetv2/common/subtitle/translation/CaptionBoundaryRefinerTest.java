@@ -46,10 +46,14 @@ public class CaptionBoundaryRefinerTest {
             assertEquals(1, h.boundaries);
             assertEquals(1, h.translations);
             assertEquals(Arrays.asList("old", "new line", "last line"), h.sent);
-            assertEquals(2, h.engine.prepareFrame().items.size());
+            assertEquals(1, h.engine.prepareFrame().items.size());
             assertEquals("旧行", h.engine.prepareFrame().items.get(0).translation);
-            assertEquals("新行", h.engine.prepareFrame().items.get(1).translation);
+            h.engine.tick(1_500_000, false);
+            assertEquals(1, h.engine.prepareFrame().items.size());
+            assertEquals("新行", h.engine.prepareFrame().items.get(0).translation);
             h.engine.tick(2_500_000, true); h.queue.drain();
+            assertEquals(1, h.engine.prepareFrame().items.size());
+            assertEquals("末行", h.engine.prepareFrame().items.get(0).translation);
             h.engine.tick(1_000_000, true); h.queue.drain();
             assertEquals(1, h.boundaries);
             assertEquals(1, h.translations);

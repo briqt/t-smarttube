@@ -48,14 +48,27 @@ public final class SemanticGroupPlanner {
         }
     }
 
-    /** Belongs to one exact mapped document; contains no new start/end times. */
+    /** Belongs to one exact mapped document; computes non-overlapping display windows for resolved paint-on flows. */
     public static final class Plan {
+        private static final class Window {
+            static final Window EMPTY = new Window(0, 0);
+            final long startUs;
+            final long endUs;
+
+            Window(long startUs, long endUs) {
+                this.startUs = startUs;
+                this.endUs = endUs;
+            }
+        }
+
         private final MappedTranscript mTranscript;
         private final List<Group> mGroups;
+        private final Window[] mWindows;
 
         private Plan(MappedTranscript transcript, List<Group> groups) {
             mTranscript = transcript;
             mGroups = Collections.unmodifiableList(new ArrayList<>(groups));
+            mWindows = computeWindows(mTranscript, mGroups);
         }
 
         public boolean isFor(MappedTranscript transcript) {
@@ -113,17 +126,40 @@ public final class SemanticGroupPlanner {
             return true;
         }
 
-        /** Active source intervals only; a text cut does not create a finer playback clock. */
+        /**
+         * Active groups at playback time: non-overlapping primary windows for resolved paint-on flows,
+         * and raw source intervals for unlinked/single-group flows.
+         */
         public List<Integer> getGroupsAt(long timeUs) {
             List<Integer> active = new ArrayList<>();
             for (int i = 0; i < mGroups.size(); i++) {
-                if (activeAt(mGroups.get(i), timeUs)) active.add(i);
+                if (activeAt(i, timeUs)) active.add(i);
             }
             return Collections.unmodifiableList(active);
         }
 
-        private boolean activeAt(Group group, long timeUs) {
+        /** Next active window start at or after timeUs, or Long.MAX_VALUE if none. */
+        public long getNextStartUs(int index, long timeUs) {
+            Group group = group(index);
+            Window window = mWindows[index];
+            if (window != null) {
+                return window.startUs < window.endUs && window.startUs >= timeUs ? window.startUs : Long.MAX_VALUE;
+            }
+            long start = Long.MAX_VALUE;
             for (MappedTranscript.Slice slice : group.slices) {
+                for (MappedTranscript.Origin origin : mTranscript.getAtoms().get(slice.atomIndex).origins) {
+                    if (origin.activeStartUs >= timeUs) start = Math.min(start, origin.activeStartUs);
+                }
+            }
+            return start;
+        }
+
+        private boolean activeAt(int index, long timeUs) {
+            Window window = mWindows[index];
+            if (window != null) {
+                return window.startUs <= timeUs && timeUs < window.endUs;
+            }
+            for (MappedTranscript.Slice slice : mGroups.get(index).slices) {
                 for (MappedTranscript.Origin origin : mTranscript.getAtoms().get(slice.atomIndex).origins) {
                     if (origin.activeStartUs <= timeUs && timeUs < origin.activeEndUs) return true;
                 }
@@ -134,6 +170,140 @@ public final class SemanticGroupPlanner {
         private Group group(int index) {
             if (index < 0 || index >= mGroups.size()) throw RawTimeline.invalid();
             return mGroups.get(index);
+        }
+
+        private static Window[] computeWindows(MappedTranscript transcript, List<Group> groups) {
+            Window[] windows = new Window[groups.size()];
+            if (transcript.normalizationVersion() == 0 || groups.size() < 2) {
+                return windows;
+            }
+            for (int first = 0; first < groups.size();) {
+                int flow = flowOf(transcript, groups.get(first));
+                int end = first + 1;
+                while (end < groups.size() && flowOf(transcript, groups.get(end)) == flow) {
+                    end++;
+                }
+                if (end - first >= 2) {
+                    computeFlowWindows(transcript, groups, first, end, windows);
+                }
+                first = end;
+            }
+            return windows;
+        }
+
+        private static int flowOf(MappedTranscript transcript, Group group) {
+            return transcript.getAtoms().get(group.slices.get(0).atomIndex).flowIndex;
+        }
+
+        private static void computeFlowWindows(MappedTranscript transcript, List<Group> groups,
+                                               int first, int end, Window[] windows) {
+            boolean hasEcho = false;
+            long flowStartUs = Long.MAX_VALUE;
+            long flowEndUs = Long.MIN_VALUE;
+            for (int g = first; g < end; g++) {
+                for (MappedTranscript.Slice slice : groups.get(g).slices) {
+                    for (MappedTranscript.Origin origin : transcript.getAtoms().get(slice.atomIndex).origins) {
+                        hasEcho |= origin.echo;
+                        if (origin.activeStartUs < flowStartUs) flowStartUs = origin.activeStartUs;
+                        if (origin.activeEndUs > flowEndUs) flowEndUs = origin.activeEndUs;
+                    }
+                }
+            }
+            if (!hasEcho || flowStartUs >= flowEndUs) {
+                return;
+            }
+            List<SpokenSpan> spoken = new ArrayList<>();
+            for (int g = first; g < end; g++) {
+                SpokenSpan span = spokenSpan(transcript, groups.get(g), g);
+                if (span == null) {
+                    windows[g] = Window.EMPTY;
+                } else {
+                    spoken.add(span);
+                }
+            }
+            if (spoken.isEmpty()) {
+                return;
+            }
+            if (spoken.size() == 1) {
+                windows[spoken.get(0).groupIndex] = new Window(flowStartUs, flowEndUs);
+                return;
+            }
+            long[] bounds = new long[spoken.size() + 1];
+            bounds[0] = flowStartUs;
+            bounds[spoken.size()] = flowEndUs;
+            for (int m = 1; m < spoken.size(); m++) {
+                SpokenSpan prev = spoken.get(m - 1);
+                SpokenSpan curr = spoken.get(m);
+                long boundary = (curr.firstCue == prev.lastCue && curr.firstRun == prev.lastRun)
+                        ? sameRunBoundary(transcript.source(), curr)
+                        : curr.firstTimingStartUs;
+                bounds[m] = Math.max(bounds[m - 1], Math.min(flowEndUs, boundary));
+            }
+            for (int m = 0; m < spoken.size(); m++) {
+                windows[spoken.get(m).groupIndex] = new Window(bounds[m], bounds[m + 1]);
+            }
+        }
+
+        private static long sameRunBoundary(RawTimeline source, SpokenSpan curr) {
+            RawTimeline.TextRun run = source.getCues().get(curr.firstCue).runs.get(curr.firstRun);
+            int len = run.textEnd - run.textStart;
+            long span = run.timingEndUs > run.timingStartUs ? run.timingEndUs - run.timingStartUs : 0L;
+            if (len <= 1 || span == 0L) {
+                return run.timingStartUs;
+            }
+            int cut = Math.max(1, Math.min(len - 1, curr.firstFrom - run.textStart));
+            return run.timingStartUs + (span / len) * cut + ((span % len) * cut) / len;
+        }
+
+        private static SpokenSpan spokenSpan(MappedTranscript transcript, Group group, int groupIndex) {
+            int firstCue = -1, firstRun = -1, firstFrom = -1;
+            long firstTimingStartUs = 0;
+            int lastCue = -1, lastRun = -1;
+            for (MappedTranscript.Slice slice : group.slices) {
+                MappedTranscript.Atom atom = transcript.getAtoms().get(slice.atomIndex);
+                int firstNonWs = firstNonWhitespace(atom.text, slice.start, slice.end);
+                if (firstNonWs < 0) continue;
+                MappedTranscript.Origin primary = atom.origins.get(0);
+                if (firstCue < 0) {
+                    firstCue = primary.cueIndex;
+                    firstRun = primary.runIndex;
+                    firstFrom = primary.textStart + firstNonWs;
+                    firstTimingStartUs = primary.timingStartUs;
+                }
+                lastCue = primary.cueIndex;
+                lastRun = primary.runIndex;
+            }
+            return firstCue < 0 ? null : new SpokenSpan(groupIndex, firstCue, firstRun, firstFrom, firstTimingStartUs, lastCue, lastRun);
+        }
+
+        private static int firstNonWhitespace(String text, int start, int end) {
+            for (int pos = start; pos < end;) {
+                int cp = text.codePointAt(pos);
+                if (!isWhitespace(cp)) return pos;
+                pos += Character.charCount(cp);
+            }
+            return -1;
+        }
+
+        private static final class SpokenSpan {
+            final int groupIndex;
+            final int firstCue;
+            final int firstRun;
+            final int firstFrom;
+            final long firstTimingStartUs;
+            final int lastCue;
+            final int lastRun;
+
+            SpokenSpan(int groupIndex, int firstCue, int firstRun, int firstFrom,
+                       long firstTimingStartUs, int lastCue, int lastRun) {
+                this.groupIndex = groupIndex;
+                this.firstCue = firstCue;
+                this.firstRun = firstRun;
+                this.firstFrom = firstFrom;
+                this.firstTimingStartUs = firstTimingStartUs;
+                this.lastCue = lastCue;
+                this.lastRun = lastRun;
+            }
         }
     }
 

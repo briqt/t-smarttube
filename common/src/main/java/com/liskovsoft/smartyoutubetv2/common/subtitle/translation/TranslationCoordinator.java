@@ -897,13 +897,7 @@ public final class TranslationCoordinator {
     }
 
     private long nextStart(int index) {
-        long start = Long.MAX_VALUE;
-        for (MappedTranscript.Slice slice : mSnapshot.groups.getGroups().get(index).slices) {
-            for (MappedTranscript.Origin origin : mSnapshot.transcript.getAtoms().get(slice.atomIndex).origins) {
-                if (origin.activeStartUs >= mPositionUs) start = Math.min(start, origin.activeStartUs);
-            }
-        }
-        return start;
+        return mSnapshot.groups.getNextStartUs(index, mPositionUs);
     }
 
     private SemanticTranslationCache.Entry cachedLocked(int index) {

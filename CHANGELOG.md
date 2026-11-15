@@ -3,6 +3,11 @@
 This log covers the enhancement fork. Upstream release history remains available
 in [SmartTube releases](https://github.com/yuliskov/SmartTube/releases).
 
+## 增强修订 14
+
+- 修复开启双语字幕时 YouTube 自动生成滚动字幕（`kind=asr`）在跨句切换或长句分段后出现的跨句穿插与多行堆积问题：为规范化连续滚动流内的各个语义组收紧显示时间窗口，在后续语义组进入或同轮增量推进时及时结束上一组显示，消除旧句与新句重叠展示。
+- 同步对齐字幕预取下一组起点查询，保持译文批量上下文与邻句只读参考范围不变；未改动上游 SmartTube 业务源码与子模块。
+
 ## 增强修订 13
 
 - 修复 AI 字幕设置中“目标翻译语言”与“单次翻译句数”选择器弹窗出现深灰底黑字导致难以辨认的问题，改为沿用原生深色侧边单选面板，并补充 AI 连接配置弹窗输入框、下拉列表与提示文字的深色对比度适配。

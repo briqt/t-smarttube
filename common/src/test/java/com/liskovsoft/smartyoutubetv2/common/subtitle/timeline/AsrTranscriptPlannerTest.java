@@ -397,6 +397,72 @@ public class AsrTranscriptPlannerTest {
     }
 
     @Test
+    public void resolvedMultiGroupWindowsStaySingleAcrossMidCueSplitsHoldsAndSameRunSentences() {
+        // 1) Long multi-sentence ASR component with BUDGET cut spanning '\n',
+        //    inline <timestamp> boundary, 10ms bridge holds, and 10ms tail hold.
+        String budgetPrefix = "alpha " + repeat("word ", 21) + "end"; // ~114 chars; BUDGET cuts after "\nnext "
+        String vtt = "WEBVTT\n\n" +
+                "00:01.000 --> 00:05.000\n" + budgetPrefix + "\nnext<00:03.000> sentence.\n\n" +
+                "00:05.000 --> 00:05.010\nnext sentence.\n\n" +
+                "00:05.010 --> 00:08.000\nnext sentence.\nafter<00:06.000> pause. <00:07.000>final part\n\n" +
+                "00:08.000 --> 00:08.010\nafter pause. final part\n";
+        AsrTranscriptPlanner.Analysis longPlan = prepare(parse(vtt));
+        assertTrue(longPlan.normalized);
+        SemanticGroupPlanner.Plan plan = longPlan.groups;
+        assertEquals(4, plan.getGroups().size());
+        assertEquals(SemanticGroupPlanner.Boundary.BUDGET, plan.getGroups().get(0).boundary);
+        long[] probes = {
+                999_999L, 1_000_000L, 1_500_000L, 2_999_999L,
+                3_000_000L, 5_005_000L, 5_010_000L,
+                6_999_999L, 7_000_000L, 8_005_000L, 8_010_000L
+        };
+        assertEquals(Collections.emptyList(), plan.getGroupsAt(probes[0]));
+        assertEquals(Collections.emptyList(), plan.getGroupsAt(probes[probes.length - 1]));
+        for (long t = 1_000_000L; t < 8_010_000L; t += 100_000L) {
+            assertEquals("Expected single active group at " + t, 1, plan.getGroupsAt(t).size());
+        }
+        assertEquals(Collections.singletonList(0), plan.getGroupsAt(1_000_000L));
+        assertEquals(Collections.singletonList(1), plan.getGroupsAt(3_000_000L));
+        assertEquals(Collections.singletonList(1), plan.getGroupsAt(5_005_000L)); // 10ms bridge hold stays on G1
+        assertEquals(Collections.singletonList(2), plan.getGroupsAt(5_010_000L));
+        assertEquals(Collections.singletonList(3), plan.getGroupsAt(7_000_000L)); // Space skipped, jumps cleanly on "final"
+        assertEquals(Collections.singletonList(3), plan.getGroupsAt(8_005_000L)); // 10ms tail hold stays on G3
+        assertEquals(3_000_000L, plan.getNextStartUs(1, 2_000_000L));
+        assertEquals(Long.MAX_VALUE, plan.getNextStartUs(0, 5_010_000L)); // Echo in cue 2 must not requeue G0
+
+        // 2) Two sentences inside a single TextRun without inline timestamp + head==false + trailing whitespace "\n "
+        String sameRunVtt = "WEBVTT\n\n" +
+                "00:10.000 --> 00:12.000\nFirst part. Second part\nmid<00:11.500> line\n\n" +
+                "00:12.000 --> 00:12.010\nmid line\n\n" +
+                "00:12.010 --> 00:14.000\nmid line\nlast<00:13.000> line.\n\n" +
+                "00:14.000 --> 00:14.010\nlast line.\n \n";
+        AsrTranscriptPlanner.Analysis sameRun = prepare(parse(sameRunVtt));
+        assertTrue(sameRun.normalized);
+        SemanticGroupPlanner.Plan sameRunPlan = sameRun.groups;
+        assertEquals(3, sameRunPlan.getGroups().size());
+        assertEquals("First part.", sameRunPlan.getText(0));
+        assertEquals(" Second part\nmid line\nlast line.", sameRunPlan.getText(1));
+        assertEquals("\n ", sameRunPlan.getText(2));
+        long switchUs = sameRunPlan.getNextStartUs(1, 10_000_000L);
+        assertTrue("Split boundary must lie strictly inside (10s, 11.5s)", switchUs > 10_000_000L && switchUs < 11_500_000L);
+        assertEquals(Collections.singletonList(0), sameRunPlan.getGroupsAt(10_000_000L));
+        assertEquals(Collections.singletonList(0), sameRunPlan.getGroupsAt(switchUs - 1));
+        assertEquals(Collections.singletonList(1), sameRunPlan.getGroupsAt(switchUs));
+        assertEquals(Collections.singletonList(1), sameRunPlan.getGroupsAt(14_005_000L)); // Pure-whitespace G2 never steals tail hold
+        assertEquals(Collections.emptyList(), sameRunPlan.getGroupsAt(14_010_000L));
+        assertEquals(Long.MAX_VALUE, sameRunPlan.getNextStartUs(2, 10_000_000L));
+
+        // 3) Separate components with silent gap stay separated (no gap bridging)
+        String twoFlowsVtt = sameRunVtt + "\n" +
+                "00:20.000 --> 00:22.000\nlead\nnext<00:21.000> flow\n\n" +
+                "00:22.000 --> 00:22.010\nnext flow\n\n" +
+                "00:22.010 --> 00:24.000\nnext flow\nsecond.<00:23.000> third\n";
+        AsrTranscriptPlanner.Analysis twoFlows = prepare(parse(twoFlowsVtt));
+        assertTrue(twoFlows.normalized);
+        assertEquals(Collections.emptyList(), twoFlows.groups.getGroupsAt(17_000_000L));
+    }
+
+    @Test
     public void emptySourceAndImmutableOwnedOutputsAreNotSyntheticEvents() {
         RawTimeline empty = parse("WEBVTT\n\n");
         AsrTranscriptPlanner.Analysis result = prepare(empty);
