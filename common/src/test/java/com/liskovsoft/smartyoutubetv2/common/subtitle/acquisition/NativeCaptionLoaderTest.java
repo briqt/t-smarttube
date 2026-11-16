@@ -128,7 +128,7 @@ public class NativeCaptionLoaderTest {
     }
 
     @Test
-    public void supportedSettingsKeepDocumentTimingStylesStillFallbackAndTimestampMapCannotInventClock() {
+    public void supportedSettingsAndStyleUseDocumentTimingRegionStillFallbacksAndTimestampMapCannotInventClock() {
         Transport transport = new Transport();
         transport.body = bytes("WEBVTT\n\n00:01.000 --> 00:04.000 align:start\noriginal\n");
         List<NativeCaptionLoader.Result> result = new ArrayList<>();
@@ -140,10 +140,14 @@ public class NativeCaptionLoaderTest {
         transport.body = bytes("WEBVTT\n\nSTYLE\n::cue { color: lime; }\n\n00:01.000 --> 00:04.000\noriginal\n");
         loader.start(request(transport), 10_000_000, LIMITS, result::add);
         assertEquals(NativeCaptionLoader.Status.ACCEPTED, result.get(1).status);
-        assertEquals(RawTimeline.Origin.NATIVE_DISPLAY, result.get(1).timeline.getOrigin());
+        assertEquals(RawTimeline.Origin.DOCUMENT, result.get(1).timeline.getOrigin());
+        transport.body = bytes("WEBVTT\n\nREGION\nid:r\n\n00:01.000 --> 00:04.000\noriginal\n");
+        loader.start(request(transport), 10_000_000, LIMITS, result::add);
+        assertEquals(NativeCaptionLoader.Status.ACCEPTED, result.get(2).status);
+        assertEquals(RawTimeline.Origin.NATIVE_DISPLAY, result.get(2).timeline.getOrigin());
         transport.body = bytes("WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:900000,LOCAL:00:00.000\n\n00:01.000 --> 00:04.000 align:start position:0%\noriginal\n");
         loader.start(request(transport), 10_000_000, LIMITS, result::add);
-        assertEquals(NativeCaptionLoader.Status.REJECTED, result.get(2).status);
+        assertEquals(NativeCaptionLoader.Status.REJECTED, result.get(3).status);
         loader.close();
     }
 
@@ -179,7 +183,7 @@ public class NativeCaptionLoaderTest {
     }
 
     @Test
-    public void ttmlOriginalUsesSameTransportAndSafeNativeWholeDocumentProjection() {
+    public void ttmlOriginalUsesDocumentOriginAndSafeNativeFallbackForSequentialContainers() {
         Transport transport = new Transport();
         String base = BASE.replace("fmt=vtt", "fmt=ttml");
         MediaSubtitle current = subtitle("Chinese", "zh-Hans", base + "&tlang=zh-Hans", null, "application/ttml+xml");
@@ -192,9 +196,15 @@ public class NativeCaptionLoaderTest {
         NativeCaptionLoader loader = new NativeCaptionLoader(Runnable::run, Runnable::run);
         loader.start(request, 10_000_000, LIMITS, result::add);
         assertEquals(NativeCaptionLoader.Status.ACCEPTED, result.get(0).status);
-        assertEquals(RawTimeline.Origin.NATIVE_DISPLAY, result.get(0).timeline.getOrigin());
+        assertEquals(RawTimeline.Origin.DOCUMENT, result.get(0).timeline.getOrigin());
         assertEquals("original TTML", result.get(0).timeline.getCuesAt(1_000_000).get(0).text);
         assertTrue(transport.specs.get(0).httpRequestHeaders.isEmpty());
+
+        transport.body = bytes("<tt xmlns=\"http://www.w3.org/ns/ttml\"><body timeContainer=\"seq\"><p begin=\"1s\" end=\"4s\">seq TTML</p></body></tt>");
+        loader.start(request, 10_000_000, LIMITS, result::add);
+        assertEquals(NativeCaptionLoader.Status.ACCEPTED, result.get(1).status);
+        assertEquals(RawTimeline.Origin.NATIVE_DISPLAY, result.get(1).timeline.getOrigin());
+        assertEquals("seq TTML", result.get(1).timeline.getCuesAt(1_000_000).get(0).text);
         loader.close();
     }
 

@@ -16,6 +16,7 @@ import com.liskovsoft.mediaserviceinterfaces.data.MediaSubtitle;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.session.CaptionSession;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.source.CaptionSource;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.MappedTranscript;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.RawTimeline;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.SegmentationProposal;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.SemanticGroupPlanner;
 
@@ -40,8 +41,8 @@ import static org.junit.Assert.*;
 @Config(manifest = Config.NONE, sdk = 27)
 public class CaptionObservationTest {
     private static final String VTT = "WEBVTT\n\n00:01.000 --> 00:12.000 align:start\nsecret-payload\n";
-    // CSS still needs native projection; scalar settings alone no longer force that path.
-    private static final String NATIVE_ONLY_VTT = VTT.replace("WEBVTT\n\n", "WEBVTT\n\nSTYLE\n::cue { color: lime; }\n\n");
+    // Region blocks still need native projection; STYLE and scalar settings use document timing.
+    private static final String NATIVE_ONLY_VTT = VTT.replace("WEBVTT\n\n", "WEBVTT\n\nREGION\nid:r\n\n");
     private final List<Runnable> tasks = new ArrayList<>();
     private final List<CaptionObservation.Report> reports = new ArrayList<>();
     private final FakeDecoder nativeDecoder = new FakeDecoder();
@@ -150,7 +151,49 @@ public class CaptionObservationTest {
         assertEquals(CaptionObservation.Route.SABR_CATALOG, reports.get(0).lease.route);
         assertEquals(CaptionSampleMetrics.Status.TTML_NOT_ANALYZED, reports.get(0).metrics.status);
         assertNull(reports.get(0).metrics.maxEndUs);
-        assertEquals(CaptionObservation.TimelineState.SKIPPED, reports.get(0).timeline.state);
+        assertEquals(CaptionObservation.TimelineState.REJECTED, reports.get(0).timeline.state);
+    }
+
+    @Test
+    public void styleWebvttAndTtmlAsrUseDocumentOriginAndDeduplicateIdenticalUrlTracks() throws Exception {
+        String styledVtt = "WEBVTT\n\nSTYLE\n::cue { color: lime; }\n\n00:01.000 --> 00:03.000\nstyled line\n";
+        observation.createDecoder(bind(format("a", "English", "text/vtt"))).queueInputBuffer(input(styledVtt));
+        drain();
+        assertEquals(CaptionObservation.TimelineState.ACCEPTED, reports.get(0).timeline.state);
+        assertEquals(RawTimeline.Origin.DOCUMENT, reports.get(0).timeline.origin);
+
+        reports.clear();
+        String asrUrl = "https://www.youtube.com/api/timedtext?v=v1&lang=en&kind=asr&fmt=ttml";
+        MediaItemFormatInfo info = info(
+                asrSubtitle("a.en", "English", "application/ttml+xml", "en", asrUrl),
+                asrSubtitle(null, "English", "application/ttml+xml", "en", asrUrl));
+        SabrManifest manifest = new SabrManifestParser().parse(info);
+        Format format = manifest.getPeriod(0).adaptationSets.get(0).representations.get(0).format;
+        observation.bindSource(info, manifest);
+        assertNotNull(observation.sourceFor(format));
+        String ttml = "<tt xmlns=\"http://www.w3.org/ns/ttml\" xml:lang=\"en\"><body><div>"
+                + "<p begin=\"1s\" end=\"2s\">1</p>"
+                + "<p begin=\"2s\" end=\"3s\">1 2</p>"
+                + "<p begin=\"3s\" end=\"4s\">1 2 3</p>"
+                + "</div></body></tt>";
+        observation.createDecoder(format).queueInputBuffer(input(ttml));
+        drain();
+        assertEquals(CaptionObservation.TimelineState.ACCEPTED, reports.get(0).timeline.state);
+        assertEquals(RawTimeline.Origin.DOCUMENT, reports.get(0).timeline.origin);
+        assertEquals(1, reports.get(0).timeline.normalization);
+    }
+
+    private static MediaSubtitle asrSubtitle(String id, String name, String mime, String language, String baseUrl) {
+        return new MediaSubtitle() {
+            public String getBaseUrl() { return baseUrl; }
+            public boolean isTranslatable() { return true; }
+            public String getLanguageCode() { return language; }
+            public String getVssId() { return id; }
+            public String getName() { return name; }
+            public String getMimeType() { return mime; }
+            public String getCodecs() { return null; }
+            public String getType() { return null; }
+        };
     }
 
     @Test

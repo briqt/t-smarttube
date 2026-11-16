@@ -24,6 +24,7 @@ import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.AsrTranscriptPlan
 import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.RawTimeline;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.RawWebvttParser;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.SemanticGroupPlanner;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.TtmlTimelineParser;
 
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -43,9 +44,9 @@ public final class CaptionObservation implements SubtitleDecoderFactory {
     private static final int MAX_DIAGNOSTIC_SAMPLES_PER_DECODER = 32;
     // Bounded business document profile, not a sample-count admission or network-request policy.
     private static final RawTimeline.Limits TIMELINE_LIMITS =
-            new RawTimeline.Limits(CaptionSampleMetrics.MAX_BYTES, 4096, 32768);
+            new RawTimeline.Limits(CaptionSampleMetrics.MAX_BYTES, 8192, 65536);
     private static final SemanticGroupPlanner.Limits GROUP_LIMITS =
-            new SemanticGroupPlanner.Limits(4096, 32768, 32768);
+            new SemanticGroupPlanner.Limits(65536, 65536, 65536);
 
     enum TimelineState { SKIPPED, ACCEPTED, REJECTED }
 
@@ -245,12 +246,14 @@ public final class CaptionObservation implements SubtitleDecoderFactory {
         final String id;
         final String language;
         final String mime;
+        final String url;
         final CaptionSource source;
         Entry(MediaSubtitle subtitle) {
             id = subtitle.getVssId();
             String name = subtitle.getName();
             language = Util.normalizeLanguageCode(name == null ? subtitle.getLanguageCode() : name);
             mime = subtitle.getMimeType();
+            url = subtitle.getBaseUrl();
             source = CaptionSourceClassifier.classify(subtitle);
         }
         boolean matches(Format format) {
@@ -378,8 +381,17 @@ public final class CaptionObservation implements SubtitleDecoderFactory {
             if (format == null) continue;
             int count = 0;
             CaptionSource source = null;
+            String matchedUrl = null;
             for (Entry entry : entries) {
-                if (entry.matches(format)) { count++; source = entry.source; }
+                if (!entry.matches(format)) continue;
+                if (count == 0) {
+                    count = 1;
+                    source = entry.source;
+                    matchedUrl = entry.url;
+                } else if (matchedUrl == null || !matchedUrl.equals(entry.url)) {
+                    count++;
+                    source = null;
+                }
             }
             NativeCaptionRequest original = NativeCaptionRequest.find(videoId, subtitles, format, factory, visitorCookie, clock);
             mFormats.put(format, new Binding(count, count == 1 ? source : null, original != null));
@@ -590,9 +602,11 @@ public final class CaptionObservation implements SubtitleDecoderFactory {
                 MappedTranscript transcript = null;
                 SemanticGroupPlanner.Plan groups = null;
                 TimelineState state = TimelineState.SKIPPED;
-                if (bytes != null && "text/vtt".equals(lease.mime)) {
+                if (bytes != null && ("text/vtt".equals(lease.mime) || "application/ttml+xml".equals(lease.mime))) {
                     try {
-                        raw = RawWebvttParser.parseForNativePlayback(bytes, input.offsetUs, TIMELINE_LIMITS);
+                        raw = "text/vtt".equals(lease.mime)
+                                ? RawWebvttParser.parseForNativePlayback(bytes, input.offsetUs, TIMELINE_LIMITS)
+                                : TtmlTimelineParser.parseForNativePlayback(bytes, input.offsetUs, TIMELINE_LIMITS);
                         AsrTranscriptPlanner.Analysis analysis = AsrTranscriptPlanner.prepare(raw, lease.binding.source,
                                 TIMELINE_LIMITS, GROUP_LIMITS);
                         if (analysis.transcript != null && analysis.groups != null) {

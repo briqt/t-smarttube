@@ -8,6 +8,7 @@ import java.util.List;
 public final class SemanticGroupPlanner {
     public enum Boundary {
         PUNCTUATION,
+        PAUSE,
         FLOW_END,
         /** Boundary accepted from an owned typed proposal; source text and clocks remain unchanged. */
         TYPED,
@@ -185,9 +186,12 @@ public final class SemanticGroupPlanner {
                 }
                 if (end - first >= 2) {
                     computeFlowWindows(transcript, groups, first, end, windows);
+                } else {
+                    computeSingleGroupWindow(transcript, groups.get(first), first, windows);
                 }
                 first = end;
             }
+            clampOverlappingWindows(windows);
             return windows;
         }
 
@@ -195,21 +199,55 @@ public final class SemanticGroupPlanner {
             return transcript.getAtoms().get(group.slices.get(0).atomIndex).flowIndex;
         }
 
+        private static void computeSingleGroupWindow(MappedTranscript transcript, Group group,
+                                                     int index, Window[] windows) {
+            if (spokenSpan(transcript, group, index) == null) {
+                windows[index] = Window.EMPTY;
+                return;
+            }
+            long startUs = Long.MAX_VALUE;
+            long endUs = Long.MIN_VALUE;
+            for (MappedTranscript.Slice slice : group.slices) {
+                for (MappedTranscript.Origin origin : transcript.getAtoms().get(slice.atomIndex).origins) {
+                    if (origin.activeStartUs < startUs) startUs = origin.activeStartUs;
+                    if (origin.activeEndUs > endUs) endUs = origin.activeEndUs;
+                }
+            }
+            windows[index] = startUs < endUs ? new Window(startUs, endUs) : Window.EMPTY;
+        }
+
+        private static void clampOverlappingWindows(Window[] windows) {
+            long nextStartUs = Long.MAX_VALUE;
+            for (int i = windows.length - 1; i >= 0; i--) {
+                Window window = windows[i];
+                if (window == null || window.startUs >= window.endUs) {
+                    continue;
+                }
+                if (window.endUs > nextStartUs) {
+                    window = window.startUs < nextStartUs
+                            ? new Window(window.startUs, nextStartUs)
+                            : Window.EMPTY;
+                    windows[i] = window;
+                }
+                if (window.startUs < window.endUs) {
+                    nextStartUs = window.startUs;
+                }
+            }
+        }
+
         private static void computeFlowWindows(MappedTranscript transcript, List<Group> groups,
                                                int first, int end, Window[] windows) {
-            boolean hasEcho = false;
             long flowStartUs = Long.MAX_VALUE;
             long flowEndUs = Long.MIN_VALUE;
             for (int g = first; g < end; g++) {
                 for (MappedTranscript.Slice slice : groups.get(g).slices) {
                     for (MappedTranscript.Origin origin : transcript.getAtoms().get(slice.atomIndex).origins) {
-                        hasEcho |= origin.echo;
                         if (origin.activeStartUs < flowStartUs) flowStartUs = origin.activeStartUs;
                         if (origin.activeEndUs > flowEndUs) flowEndUs = origin.activeEndUs;
                     }
                 }
             }
-            if (!hasEcho || flowStartUs >= flowEndUs) {
+            if (flowStartUs >= flowEndUs) {
                 return;
             }
             List<SpokenSpan> spoken = new ArrayList<>();
@@ -383,7 +421,14 @@ public final class SemanticGroupPlanner {
 
     /** Explicit rule candidates, not automatic ASR recognition, word timing, or a display layout. */
     public static Plan candidates(MappedTranscript transcript, int maxCodePoints, Limits limits) {
-        if (transcript == null || limits == null || maxCodePoints <= 0 || maxCodePoints > 1024 * 1024) {
+        return candidates(transcript, maxCodePoints, 0L, 0L, limits);
+    }
+
+    /** Candidate groups with optional pause-based splits for unpunctuated normalized ASR flows. */
+    static Plan candidates(MappedTranscript transcript, int maxCodePoints, long pauseGapUs,
+                           long stalledWordUs, Limits limits) {
+        if (transcript == null || limits == null || maxCodePoints <= 0 || maxCodePoints > 1024 * 1024
+                || pauseGapUs < 0 || stalledWordUs < 0) {
             throw RawTimeline.invalid();
         }
         List<MappedTranscript.Atom> atoms = transcript.getAtoms();
@@ -396,19 +441,112 @@ public final class SemanticGroupPlanner {
             while (next < atoms.size() && atoms.get(next).flowIndex == flow) {
                 text.append(atoms.get(next++).text);
             }
-            planFlow(text.toString(), maxCodePoints, slices, groups);
+            String flowText = text.toString();
+            int[] pauseBreaks = (pauseGapUs > 0 || stalledWordUs > 0)
+                    ? computePauseBreaks(atoms, first, next, flowText, pauseGapUs, stalledWordUs)
+                    : EMPTY_INT_ARRAY;
+            planFlow(flowText, maxCodePoints, pauseBreaks, slices, groups);
             first = next;
         }
         return groups.finish();
     }
 
-    private static void planFlow(String text, int budget, SliceCursor slices, Collector groups) {
+    private static final int[] EMPTY_INT_ARRAY = new int[0];
+
+    private static int[] computePauseBreaks(List<MappedTranscript.Atom> atoms, int first, int next,
+                                            String flowText, long pauseGapUs, long stalledWordUs) {
+        List<Integer> breaks = new ArrayList<>();
+        int[] starts = new int[next - first];
+        int pos = 0;
+        for (int i = first; i < next; i++) {
+            starts[i - first] = pos;
+            pos += atoms.get(i).text.length();
+        }
+        MappedTranscript.Origin prevOrigin = null;
+        int prevEndOffset = -1;
+        for (int i = first; i < next; i++) {
+            MappedTranscript.Atom atom = atoms.get(i);
+            int atomStart = starts[i - first];
+            int firstNonWs = firstNonWhitespaceIndex(atom.text);
+            if (firstNonWs < 0) {
+                continue;
+            }
+            MappedTranscript.Origin origin = atom.origins.get(0);
+            if (prevOrigin != null && pauseGapUs > 0 && origin.timingStartUs - prevOrigin.timingEndUs >= pauseGapUs) {
+                addUniqueBreak(breaks, atomStart + firstNonWs);
+            }
+            if (stalledWordUs > 0
+                    && origin.timingKind == RawTimeline.TimingKind.VTT_TIMESTAMP_WINDOW
+                    && atom.text.length() <= 16
+                    && origin.timingEndUs - origin.timingStartUs >= stalledWordUs) {
+                int breakAfter = skipFollowingWhitespace(flowText, atomStart + atom.text.length());
+                if (breakAfter < flowText.length()) {
+                    addUniqueBreak(breaks, breakAfter);
+                }
+            }
+            prevOrigin = origin;
+            prevEndOffset = atomStart + atom.text.length();
+        }
+        if (prevEndOffset < 0 || breaks.isEmpty()) {
+            return EMPTY_INT_ARRAY;
+        }
+        int[] result = new int[breaks.size()];
+        for (int i = 0; i < breaks.size(); i++) {
+            result[i] = breaks.get(i);
+        }
+        return result;
+    }
+
+    private static void addUniqueBreak(List<Integer> breaks, int offset) {
+        if (offset > 0 && (breaks.isEmpty() || breaks.get(breaks.size() - 1) < offset)) {
+            breaks.add(offset);
+        }
+    }
+
+    private static int firstNonWhitespaceIndex(String text) {
+        for (int i = 0; i < text.length();) {
+            int cp = text.codePointAt(i);
+            if (!isWhitespace(cp)) return i;
+            i += Character.charCount(cp);
+        }
+        return -1;
+    }
+
+    private static int skipFollowingWhitespace(String text, int offset) {
+        int pos = offset;
+        while (pos < text.length()) {
+            int cp = text.codePointAt(pos);
+            if (!isWhitespace(cp)) break;
+            pos += Character.charCount(cp);
+        }
+        return pos;
+    }
+
+    private static boolean hasEnoughContentAfter(String text, int offset, int minCodePoints) {
+        int count = 0;
+        for (int i = offset; i < text.length();) {
+            int cp = text.codePointAt(i);
+            if (!isWhitespace(cp) && ++count >= minCodePoints) {
+                return true;
+            }
+            i += Character.charCount(cp);
+        }
+        return false;
+    }
+
+    private static void planFlow(String text, int budget, int[] pauseBreaks, SliceCursor slices, Collector groups) {
         int start = 0;
         int punctuation = nextPunctuation(text, 0);
+        int pauseIndex = 0;
         while (start < text.length()) {
+            while (pauseIndex < pauseBreaks.length && pauseBreaks[pauseIndex] <= start) {
+                pauseIndex++;
+            }
+            int nextPause = pauseIndex < pauseBreaks.length ? pauseBreaks[pauseIndex] : -1;
             int end = start;
             int whitespace = -1;
             int count = 0;
+            boolean paused = false;
             while (end < text.length() && end != punctuation && count < budget) {
                 int codePoint = text.codePointAt(end);
                 end += Character.charCount(codePoint);
@@ -416,9 +554,22 @@ public final class SemanticGroupPlanner {
                 if (isWhitespace(codePoint)) {
                     whitespace = end;
                 }
+                if (nextPause > 0 && end == nextPause) {
+                    if (count >= 24 && hasEnoughContentAfter(text, end, 12)
+                            && (punctuation < 0 || (punctuation - end > 16
+                            && text.codePointCount(start, punctuation) > budget))) {
+                        paused = true;
+                        pauseIndex++;
+                        break;
+                    }
+                    pauseIndex++;
+                    nextPause = pauseIndex < pauseBreaks.length ? pauseBreaks[pauseIndex] : -1;
+                }
             }
             Boundary boundary;
-            if (end == punctuation) {
+            if (paused) {
+                boundary = Boundary.PAUSE;
+            } else if (end == punctuation) {
                 boundary = Boundary.PUNCTUATION;
                 punctuation = nextPunctuation(text, end);
             } else if (end == text.length()) {

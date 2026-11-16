@@ -84,7 +84,16 @@ public final class RawWebvttParser {
                 }
                 continue;
             }
-            if (lines[line].equals("STYLE") || lines[line].equals("REGION")) {
+            if (nativeCompatible && cues.isEmpty() && blockMarker(lines[line], "STYLE")) {
+                while (line < lines.length && !lines[line].isEmpty()) {
+                    if (lines[line].contains("-->")) {
+                        throw RawTimeline.invalid();
+                    }
+                    line++;
+                }
+                continue;
+            }
+            if (blockMarker(lines[line], "STYLE") || blockMarker(lines[line], "REGION")) {
                 throw RawTimeline.invalid();
             }
             String id = null;
@@ -370,5 +379,9 @@ public final class RawWebvttParser {
         }
         // Ruby and unknown tags need a separate text/metadata contract.
         throw RawTimeline.invalid();
+    }
+
+    private static boolean blockMarker(String line, String name) {
+        return line.equals(name) || line.startsWith(name + " ") || line.startsWith(name + "\t");
     }
 }

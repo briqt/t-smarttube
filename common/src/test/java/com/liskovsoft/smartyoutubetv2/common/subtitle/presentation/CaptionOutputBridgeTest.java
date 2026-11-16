@@ -971,6 +971,109 @@ public class CaptionOutputBridgeTest {
         } finally { manager.release(); h.close(); }
     }
 
+    @Test
+    public void ttmlProgressiveAndOverlappingAsrProducesNonRepeatingBilingualSequence() throws Exception {
+        String ttml = "<tt xmlns=\"http://www.w3.org/ns/ttml\" xml:lang=\"en\">\n"
+                + "  <body><div>\n"
+                + "    <p begin=\"1000ms\" end=\"1500ms\">One.</p>\n"
+                + "    <p begin=\"1500ms\" end=\"2000ms\">One. Two.</p>\n"
+                + "    <p begin=\"2000ms\" end=\"2600ms\">One. Two. Three.</p>\n"
+                + "    <p begin=\"2500ms\" end=\"3300ms\">Two. Three. Four.</p>\n"
+                + "    <p begin=\"3300ms\" end=\"4200ms\">Three. Four. Five.</p>\n"
+                + "  </div></body>\n"
+                + "</tt>";
+        List<String> translatedInputs = new ArrayList<>();
+        Harness h = new Harness(false, ttml, (target, source) -> {
+            translatedInputs.add(source.trim());
+            return "ZH:" + source.trim();
+        }, true, "application/ttml+xml");
+        h.view = new SubtitleView(RuntimeEnvironment.getApplication());
+        SubtitleManager manager = new SubtitleManager(h.view);
+        ReflectionHelpers.setField(manager, "mCaptionBridge", h.bridge);
+        try {
+            h.enable();
+            SubtitleDecoder nativeTtml = com.google.android.exoplayer2.text.SubtitleDecoderFactory.DEFAULT.createDecoder(h.format);
+            try {
+                SubtitleInputBuffer in = nativeTtml.dequeueInputBuffer();
+                assertNotNull(in);
+                byte[] bytes = ttml.getBytes(Charset.forName("UTF-8"));
+                in.ensureSpaceForWrite(bytes.length);
+                in.data.put(bytes);
+                in.timeUs = 0;
+                in.subsampleOffsetUs = 0;
+                in.addFlag(C.BUFFER_FLAG_KEY_FRAME);
+                in.flip();
+                nativeTtml.queueInputBuffer(in);
+                SubtitleOutputBuffer output = null;
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+                while (output == null && System.nanoTime() < deadline) {
+                    output = nativeTtml.dequeueOutputBuffer();
+                    if (output == null) Thread.sleep(1);
+                }
+                assertNotNull(output);
+                try {
+                    CaptionCueDispatcher dispatcher = new CaptionCueDispatcher(h.observation, manager, null);
+                    long[] timesMs = {1000, 1500, 2000, 2600, 3300};
+                    String[] expected = {
+                            "One.\nZH:One.",
+                            " Two.\nZH:Two.",
+                            " Three.\nZH:Three.",
+                            " Four.\nZH:Four.",
+                            " Five.\nZH:Five."
+                    };
+                    for (int i = 0; i < timesMs.length; i++) {
+                        h.positionMs = timesMs[i];
+                        dispatcher.onCues(output.getCues(timesMs[i] * 1000L));
+                        h.worker.drain();
+                        h.ui.pulse();
+                        assertOneVisibleCue(h, expected[i]);
+                    }
+                    assertEquals(Arrays.asList("One.", "Two.", "Three.", "Four.", "Five."), translatedInputs);
+                } finally {
+                    output.release();
+                }
+            } finally {
+                nativeTtml.release();
+            }
+        } finally { manager.release(); h.close(); }
+    }
+
+    @Test
+    public void unnormalizedNonOriginalTrackSuppressesEmptyNativeHoldFallbackWhileNormalizedPreservesBundle() throws Exception {
+        Harness unnormalized = new Harness("WEBVTT\n\n00:01.000 --> 00:04.000\nsource\n");
+        try {
+            unnormalized.enable();
+            List<Cue> emptyNative = Collections.singletonList(new Cue(""));
+            new CaptionCueDispatcher(unnormalized.observation, cues -> unnormalized.bridge.onNativeCues(cues, emptyNative), null)
+                    .onCues(Collections.singletonList(new Cue("source")));
+            unnormalized.worker.drain();
+            unnormalized.ui.pulse();
+            assertEquals(1, unnormalized.last.size());
+            assertEquals("", unnormalized.last.get(0).text.toString());
+        } finally {
+            unnormalized.close();
+        }
+
+        String rollingVtt = "WEBVTT\nKind: captions\nLanguage: en\n\n"
+                + "00:01.000 --> 00:02.000\nfirst\nsecond<00:01.500> line\n\n"
+                + "00:02.000 --> 00:02.010\nsecond line\n\n"
+                + "00:02.010 --> 00:03.000\nsecond line\nthird<00:02.500> line\n";
+        Harness normalized = new Harness(false, rollingVtt, (target, source) -> "译:" + source.trim(), true);
+        try {
+            normalized.enable();
+            normalized.positionMs = 1000;
+            List<Cue> emptyNative = Collections.singletonList(new Cue(""));
+            new CaptionCueDispatcher(normalized.observation, cues -> normalized.bridge.onNativeCues(cues, emptyNative), null)
+                    .onCues(Collections.singletonList(new Cue("first")));
+            normalized.worker.drain();
+            normalized.ui.pulse();
+            assertEquals(1, normalized.last.size());
+            assertTrue(normalized.last.get(0).text.toString().contains("译:"));
+        } finally {
+            normalized.close();
+        }
+    }
+
     private enum OriginalDifference { NONE, TEXT, CLOCK, LANGUAGE, PROJECTION, SETTINGS, HEADER_CONFLICT, WEAK }
 
     /** Real Observation.bindSource/find/InputSession, with only the original-reader executor/clock controlled. */
@@ -1010,7 +1113,7 @@ public class CaptionOutputBridgeTest {
             String originalDocument = difference == OriginalDifference.TEXT ? NATIVE_DOCUMENT.replace("second", "changed second") :
                     difference == OriginalDifference.CLOCK ? NATIVE_DOCUMENT.replace("00:11.000 --> 00:14.000", "00:12.000 --> 00:15.000") :
                     difference == OriginalDifference.PROJECTION ? NATIVE_DOCUMENT.replace("WEBVTT\n\n",
-                            "WEBVTT\n\nSTYLE\n::cue { color: lime; }\n\n") :
+                            "WEBVTT\n\nREGION\nid:r\n\n") :
                     difference == OriginalDifference.HEADER_CONFLICT ? NATIVE_DOCUMENT.replace("WEBVTT\n\n", "WEBVTT\nLanguage: fr\n\n")
                             .replace("--> 00:04.000", "--> 00:04.000 align:start position:0%")
                             .replace("--> 00:14.000", "--> 00:14.000 align:start position:0%") :
@@ -1099,13 +1202,16 @@ public class CaptionOutputBridgeTest {
     }
 
     private static MediaSubtitle caption(String name, String language, String id, String url) {
+        return caption(name, language, id, url, "text/vtt");
+    }
+    private static MediaSubtitle caption(String name, String language, String id, String url, String mimeType) {
         return new MediaSubtitle() {
             public String getBaseUrl() { return url; }
             public boolean isTranslatable() { return true; }
             public String getLanguageCode() { return language; }
             public String getVssId() { return id; }
             public String getName() { return name; }
-            public String getMimeType() { return "text/vtt"; }
+            public String getMimeType() { return mimeType; }
             public String getCodecs() { return null; }
             public String getType() { return null; }
         };
@@ -1157,6 +1263,7 @@ public class CaptionOutputBridgeTest {
         final AtomicReference<Runnable> beforeResponse = new AtomicReference<>();
         final String document;
         final boolean asrCatalog;
+        final String mime;
         final List<Cue> raw = Collections.singletonList(new Cue("source"));
         final List<Cue> normalized = Collections.singletonList(new Cue("source"));
         List<Cue> last = Collections.emptyList();
@@ -1181,8 +1288,13 @@ public class CaptionOutputBridgeTest {
         }
         Harness(boolean ignoreCancellation, String document, java.util.function.BiFunction<String, String, String> translation,
                 boolean asrCatalog) throws Exception {
+            this(ignoreCancellation, document, translation, asrCatalog, "text/vtt");
+        }
+        Harness(boolean ignoreCancellation, String document, java.util.function.BiFunction<String, String, String> translation,
+                boolean asrCatalog, String mime) throws Exception {
             this.document = document;
             this.asrCatalog = asrCatalog;
+            this.mime = mime;
             RuntimeEnvironment.getApplication().getApplicationInfo().flags |= ApplicationInfo.FLAG_DEBUGGABLE;
             observation = CaptionObservation.create(RuntimeEnvironment.getApplication());
             assertNotNull(observation);
@@ -1198,7 +1310,16 @@ public class CaptionOutputBridgeTest {
         void bind() throws Exception { bind(false); }
         void bind(boolean includeAlternate) throws Exception {
             if (decoder != null) decoder.release();
-            if (asrCatalog) {
+            if (asrCatalog && "application/ttml+xml".equals(mime)) {
+                MediaItemFormatInfo metadata = captionInfo(Collections.singletonList(caption("English", "en", "a.en",
+                        "https://www.youtube.com/api/timedtext?v=synthetic-video&lang=en&kind=asr&fmt=ttml",
+                        "application/ttml+xml")));
+                com.google.android.exoplayer2.source.sabr.manifest.SabrManifest manifest =
+                        new com.google.android.exoplayer2.source.sabr.manifest.SabrManifestParser().parse(metadata);
+                format = manifest.getPeriod(0).adaptationSets.get(0).representations.get(0).format;
+                alternateFormat = null;
+                observation.bindSource(metadata, manifest);
+            } else if (asrCatalog) {
                 MediaItemFormatInfo metadata = captionInfo(Collections.singletonList(caption("English", "en", "a.en",
                         "https://www.youtube.com/api/timedtext?v=synthetic-video&lang=en&kind=asr&fmt=vtt")));
                 DashManifest manifest = new DashManifestParser2().parse(metadata);

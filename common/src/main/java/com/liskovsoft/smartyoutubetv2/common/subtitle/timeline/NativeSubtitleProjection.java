@@ -57,6 +57,17 @@ public final class NativeSubtitleProjection {
                 com.google.android.exoplayer2.text.Cue cue = visible.get(visible.size() - 1);
                 if (cue.bitmap != null || cue.text == null || cue.text.length() == 0) continue;
                 String text = cue.text.toString();
+                if (!cues.isEmpty()) {
+                    RawTimeline.Cue previous = cues.get(cues.size() - 1);
+                    if (previous.endUs == start && previous.text.equals(text)) {
+                        List<RawTimeline.TextRun> merged = Collections.singletonList(new RawTimeline.TextRun(
+                                0, text.length(), previous.startUs, end, previous.startUs, end,
+                                RawTimeline.TimingKind.NATIVE_DISPLAY_INTERVAL, false));
+                        cues.set(cues.size() - 1, new RawTimeline.Cue(
+                                previous.sourceIndex, previous.sourceId, previous.startUs, end, text, merged, false));
+                        continue;
+                    }
+                }
                 if (cues.size() >= limits.cues || cues.size() >= limits.textRuns || text.length() > limits.documentBytes - characters) throw RawTimeline.invalid();
                 characters += text.length();
                 List<RawTimeline.TextRun> runs = Collections.singletonList(new RawTimeline.TextRun(0, text.length(),

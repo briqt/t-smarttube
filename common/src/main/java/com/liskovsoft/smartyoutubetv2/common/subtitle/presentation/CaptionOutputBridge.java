@@ -290,8 +290,13 @@ public final class CaptionOutputBridge {
                     CaptionDisplayBundle bundle = CaptionDisplayBundle.create(current.input, latest, 64, 131072);
                     if (bundle == null) return;
                     // Use the native formatter's actual layout, but never feed our two lines back into that formatter.
-                    List<Cue> base = mNative.size() == 1 ? mNative :
-                            mNative.isEmpty() ? Collections.singletonList(new Cue(mRaw.get(0).text)) : mNative;
+                    boolean normalizedOrOriginal = selection.usingFetchedOriginal ||
+                            current.input.transcript.normalizationVersion() > 0;
+                    boolean nativeEmptyText = mNative.size() == 1 &&
+                            (mNative.get(0).text == null || mNative.get(0).text.length() == 0);
+                    List<Cue> base = mNative.size() == 1 && !nativeEmptyText ? mNative :
+                            (mNative.isEmpty() || nativeEmptyText) && normalizedOrOriginal
+                                    ? Collections.singletonList(new Cue(mRaw.get(0).text)) : mNative;
                     if (base.size() != 1 || base.get(0).text == null) return;
                     List<Cue> result = NativeCueComposer.composeMapped(base, base.get(0).text.toString(), bundle.original,
                             bundle.translation, mMode, mOrder, 131072);

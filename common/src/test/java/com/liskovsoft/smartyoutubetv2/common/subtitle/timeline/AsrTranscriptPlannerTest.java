@@ -154,7 +154,7 @@ public class AsrTranscriptPlannerTest {
         RawTimeline caseLanguage = parse(new String(fixture(), StandardCharsets.UTF_8).replace("Language: en", "Language: EN"));
         assertTrue(prepare(caseLanguage).normalized);
         RawTimeline region = parse(new String(fixture(), StandardCharsets.UTF_8).replace("Language: en", "Language: en-US"));
-        assertPreserved(region, prepare(region));
+        assertTrue(prepare(region).normalized);
         RawTimeline nativeRaw = new RawTimeline(new byte[0], raw.getCues(), RAW, raw.getMetadata(),
                 RawTimeline.Origin.NATIVE_DISPLAY);
         assertPreserved(nativeRaw, prepare(nativeRaw));
@@ -198,13 +198,144 @@ public class AsrTranscriptPlannerTest {
                 small().replace("00:02.010 --> 00:03.000", "00:01.900 --> 00:03.000"),
                 small().replace("00:02.010 --> 00:03.000", "00:02.010 --> 00:03.000 align:end"),
                 small().replace("00:02.000 --> 00:02.010", "00:02.000 --> 00:02.010 align:end"),
-                small().replace("new<00:01.500> line", "new line"),
-                small().replace("last<00:02.500> line", "last line"),
-                small().replace("last<00:02.500> line", "last line<00:02.500>"),
-                small().replace("new<00:01.500> line", "<00:01.500>new line"));
+                small().replace("last<00:02.500> line", "last line<00:02.500>"));
         for (String input : inputs) {
             RawTimeline raw = parse(input);
             assertPreserved(raw, prepare(raw));
+        }
+    }
+
+    @Test
+    public void untimedOrEdgeTimedBottomLinesBridgeAsrRollingPairs() {
+        List<String> inputs = Arrays.asList(
+                small().replace("new<00:01.500> line", "new line"),
+                small().replace("last<00:02.500> line", "last line"),
+                small().replace("new<00:01.500> line", "<00:01.500>new line"));
+        for (String input : inputs) {
+            RawTimeline raw = parse(input);
+            AsrTranscriptPlanner.Analysis analysis = prepare(raw);
+            assertTrue(analysis.normalized);
+            assertCoverageAndClocks(raw, analysis.transcript);
+        }
+    }
+
+    @Test
+    public void normalizesWebvttStyleHeaderColorTagsAndOneWordLeadCues() {
+        String vtt = "WEBVTT\nKind: captions\nLanguage: en\n\n"
+                + "STYLE\n::cue(.colorE5E5E5) { color: #E5E5E5; }\n\n"
+                + "00:01.000 --> 00:01.800\n<c.colorCCCCCC>hello</c>\n\n"
+                + "00:01.800 --> 00:01.810\nhello\n\n"
+                + "00:01.810 --> 00:03.000\nhello\nworld<00:02.400> again\n\n"
+                + "00:03.000 --> 00:03.010\nworld again\n\n"
+                + "00:03.010 --> 00:04.200\nworld again\ntoday\n";
+        RawTimeline raw = RawWebvttParser.parseForNativePlayback(
+                vtt.getBytes(StandardCharsets.UTF_8), 0L, RAW);
+        AsrTranscriptPlanner.Analysis analysis = prepare(raw);
+        assertTrue(analysis.normalized);
+        assertCoverageAndClocks(raw, analysis.transcript);
+        assertEquals("hello\nworld again\ntoday", text(analysis.transcript));
+    }
+
+    @Test
+    public void normalizesSpokenLeadDirectAndHoldIntoSingleRichCue() {
+        String directTouch = "WEBVTT\nKind: captions\nLanguage: en\n\n"
+                + "00:01.000 --> 00:02.000\nfirst<00:01.500> second\n\n"
+                + "00:02.000 --> 00:03.000\nfirst second\nthird<00:02.500> fourth\n";
+        RawTimeline directRaw = parse(directTouch);
+        AsrTranscriptPlanner.Analysis direct = prepare(directRaw);
+        assertTrue(direct.normalized);
+        assertCoverageAndClocks(directRaw, direct.transcript);
+        assertEquals("first second\nthird fourth", text(direct.transcript));
+
+        String spokenLeadWithHold = "WEBVTT\nKind: captions\nLanguage: en\n\n"
+                + "00:01.000 --> 00:01.800\nalpha beta\n\n"
+                + "00:01.800 --> 00:01.810\nalpha beta\n\n"
+                + "00:01.810 --> 00:02.800\nalpha beta\ngamma<00:02.300> delta\n";
+        RawTimeline pairRaw = parse(spokenLeadWithHold);
+        AsrTranscriptPlanner.Analysis pair = prepare(pairRaw);
+        assertTrue(pair.normalized);
+        assertCoverageAndClocks(pairRaw, pair.transcript);
+        assertEquals("alpha beta\ngamma delta", text(pair.transcript));
+    }
+
+    @Test
+    public void normalizesIntermediateCueIntervalAndThreeLineWebvttRolling() {
+        String r10Chain = "WEBVTT\nKind: captions\nLanguage: en\n\n"
+                + "00:01.000 --> 00:02.000\nline1\nline2<00:01.500> mid\n\n"
+                + "00:02.000 --> 00:02.010\nline2 mid\n\n"
+                + "00:02.010 --> 00:03.000\nline2 mid\nnext\n\n"
+                + "00:03.000 --> 00:03.010\nnext\n\n"
+                + "00:03.010 --> 00:04.000\nnext\nend<00:03.500> here\n";
+        RawTimeline raw = parse(r10Chain);
+        AsrTranscriptPlanner.Analysis analysis = prepare(raw);
+        assertTrue(analysis.normalized);
+        assertCoverageAndClocks(raw, analysis.transcript);
+        assertEquals("line1\nline2 mid\nnext\nend here", text(analysis.transcript));
+
+        String threeLine = "WEBVTT\nKind: captions\nLanguage: en\n\n"
+                + "00:01.000 --> 00:02.000\nL1\nL2\nL3<00:01.500> w\n\n"
+                + "00:02.000 --> 00:02.010\nL2\nL3 w\n\n"
+                + "00:02.010 --> 00:03.200\nL2\nL3 w\nL4<00:02.600> z\n";
+        RawTimeline threeRaw = parse(threeLine);
+        AsrTranscriptPlanner.Analysis three = prepare(threeRaw);
+        assertTrue(three.normalized);
+        assertCoverageAndClocks(threeRaw, three.transcript);
+        assertEquals("L1\nL2\nL3 w\nL4 z", text(three.transcript));
+    }
+
+    @Test
+    public void splitsUnpunctuatedAsrTranscriptAtPauseBoundaries() {
+        String pauseVtt = "WEBVTT\nKind: captions\nLanguage: en\n\n"
+                + "00:01.000 --> 00:03.500\nwelcome everyone to today\n"
+                + "<00:01.300>session<00:02.800> right\n\n"
+                + "00:03.500 --> 00:03.510\nsession right\n\n"
+                + "00:03.510 --> 00:05.000\nsession right\nnow<00:04.000> let us begin immediately\n";
+        RawTimeline raw = parse(pauseVtt);
+        AsrTranscriptPlanner.Analysis analysis = prepare(raw);
+        assertTrue(analysis.normalized);
+        assertTrue(analysis.groups.getGroups().size() >= 2);
+        assertEquals(SemanticGroupPlanner.Boundary.PAUSE, analysis.groups.getGroups().get(0).boundary);
+        assertSingleActiveGroup(analysis.groups, 1_000_000L, 5_000_000L, 100_000L);
+    }
+
+    @Test
+    public void normalizesProgressiveAndOverlappingTtmlAsrIntoSingleActiveGroupSequence() {
+        String ttml = "<tt xmlns=\"http://www.w3.org/ns/ttml\" xml:lang=\"en\">\n"
+                + "  <body><div>\n"
+                + "    <p begin=\"1000ms\" end=\"1500ms\">1</p>\n"
+                + "    <p begin=\"1500ms\" end=\"2000ms\">1 2</p>\n"
+                + "    <p begin=\"2000ms\" end=\"2600ms\">1 2 3</p>\n"
+                + "    <p begin=\"2500ms\" end=\"3300ms\">2 3 4</p>\n"
+                + "    <p begin=\"3300ms\" end=\"4200ms\">3 4 5</p>\n"
+                + "  </div></body>\n"
+                + "</tt>";
+        RawTimeline raw = TtmlTimelineParser.parseForNativePlayback(
+                ttml.getBytes(StandardCharsets.UTF_8), 0L, RAW);
+        AsrTranscriptPlanner.Analysis analysis = prepare(raw);
+        assertTrue(analysis.normalized);
+        assertEquals(1, analysis.transcript.normalizationVersion());
+        assertEquals("1 2 3 4 5", text(analysis.transcript));
+        assertSingleActiveGroup(analysis.groups, 900_000L, 4_500_000L, 50_000L);
+
+        String slidingBrTtml = "<tt xmlns=\"http://www.w3.org/ns/ttml\" xml:lang=\"en\">\n"
+                + "  <body><div>\n"
+                + "    <p begin=\"1000ms\" end=\"2000ms\">one two<br/>three four</p>\n"
+                + "    <p begin=\"1950ms\" end=\"3000ms\">three four<br/>five six</p>\n"
+                + "    <p begin=\"2950ms\" end=\"4000ms\">five six<br/>seven eight</p>\n"
+                + "  </div></body>\n"
+                + "</tt>";
+        RawTimeline brRaw = TtmlTimelineParser.parseForNativePlayback(
+                slidingBrTtml.getBytes(StandardCharsets.UTF_8), 0L, RAW);
+        AsrTranscriptPlanner.Analysis brAnalysis = prepare(brRaw);
+        assertTrue(brAnalysis.normalized);
+        assertEquals("one two\nthree four\nfive six\nseven eight", text(brAnalysis.transcript));
+        assertSingleActiveGroup(brAnalysis.groups, 900_000L, 4_100_000L, 50_000L);
+    }
+
+    private static void assertSingleActiveGroup(SemanticGroupPlanner.Plan plan,
+                                                long fromUs, long toUs, long stepUs) {
+        for (long t = fromUs; t <= toUs; t += stepUs) {
+            assertTrue("Expected <= 1 active group at " + t, plan.getGroupsAt(t).size() <= 1);
         }
     }
 

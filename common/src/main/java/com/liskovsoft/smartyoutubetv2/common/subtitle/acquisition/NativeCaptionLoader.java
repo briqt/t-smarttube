@@ -7,6 +7,7 @@ import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.AsrTranscriptPlan
 import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.SemanticGroupPlanner;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.RawTimeline;
 import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.RawWebvttParser;
+import com.liskovsoft.smartyoutubetv2.common.subtitle.timeline.TtmlTimelineParser;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -99,8 +100,13 @@ public final class NativeCaptionLoader {
                 else {
                     byte[] document = bytes.toByteArray();
                     try {
-                        if (!"text/vtt".equals(mRequest.mime())) throw new IllegalArgumentException();
-                        timeline = RawWebvttParser.parse(document, 0, mLimits);
+                        if ("text/vtt".equals(mRequest.mime())) {
+                            timeline = RawWebvttParser.parseForNativePlayback(document, 0, mLimits);
+                        } else if ("application/ttml+xml".equals(mRequest.mime())) {
+                            timeline = TtmlTimelineParser.parseForNativePlayback(document, 0, mLimits);
+                        } else {
+                            throw new IllegalArgumentException();
+                        }
                     } catch (IllegalArgumentException ignored) {
                         if (new String(document, Charset.forName("UTF-8")).contains("X-TIMESTAMP-MAP")) throw new Rejected();
                         timeline = NativeSubtitleProjection.parse(document, mRequest.mime(), 0, mDurationUs, mLimits);
