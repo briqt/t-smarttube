@@ -219,7 +219,7 @@ public class SurfacePlaybackFragment extends PlaybackSupportFragment {
     }
 
     private int scaleSubsPadding() {
-        return mSubtitlesPadding / 100 * calculateZoom();
+        return mSubtitlesPadding * calculateZoom() / 100;
     }
 
     private int calculateZoom() {

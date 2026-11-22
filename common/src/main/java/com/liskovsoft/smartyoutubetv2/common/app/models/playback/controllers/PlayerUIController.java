@@ -250,7 +250,6 @@ public class PlayerUIController extends BasePlayerController {
             settingsPresenter.showDialog();
         }));
 
-        if (captions != null) captions.appendMenu(settingsPresenter);
         settingsPresenter.appendSingleSwitch(AppDialogUtil.createSubtitleChannelOption(getContext()));
 
         OptionCategory stylesCategory = AppDialogUtil.createSubtitleStylesCategory(getContext());
@@ -261,6 +260,8 @@ public class PlayerUIController extends BasePlayerController {
 
         OptionCategory positionCategory = AppDialogUtil.createSubtitlePositionCategory(getContext());
         settingsPresenter.appendRadioCategory(positionCategory.title, positionCategory.options);
+
+        if (captions != null) captions.appendMenu(settingsPresenter);
 
         settingsPresenter.showDialog(subtitlesOrigCategoryTitle, mSetSubtitleButtonState);
     }

@@ -7,10 +7,10 @@ the upstream download links in the preserved documentation below install the ori
 
 ## Subtitle enhancement
 
-- Enable bilingual subtitles per channel directly in the player subtitle menu, or configure global defaults under **Settings -> Subtitles**.
-- Choose the global target language from common presets (or enter a custom language code), set subtitles per batch (default `8`), and select original-top, translation-top, or translation-only display.
-- Configure an OpenAI-compatible or native model connection with **API URL**, **Model ID**, and **API Key**; advanced options stay collapsed by default.
-- Existing subtitle selection, NONE, styling, size and position controls remain available. Turning AI off restores the native subtitle path.
+- Enable bilingual subtitles per channel in the player subtitle menu, or configure global defaults under **Settings -> Subtitles** (grouped after native subtitle controls).
+- Choose the global target language from common presets (or enter a custom language code) and select original-top, translation-top, or translation-only display; translation batches use a fixed steady-state size of `8`.
+- Configure an OpenAI-compatible or native model connection with **API URL**, **Model**, and **API Key**; advanced options stay collapsed by default.
+- Subtitle display width is widened (`48dp` horizontal padding per side, ~90% screen width on Android TV) to reduce premature line wrapping while keeping native subtitle selection, NONE, styling, size, and vertical position controls intact. Turning AI off restores the native subtitle path.
 - Translation uses available text captions; it does not upload audio or create captions for videos without them. Unsupported or incomplete enhancement results fall back to native captions.
 - Conservatively tolerates duplicate or out-of-bounds word timestamps in auto-generated WebVTT captions: preserves the original text and cue timing while dropping fine-grained word clocks only for affected cues instead of rejecting the entire track.
 
@@ -18,9 +18,9 @@ API keys are not included in APKs and are write-only in the connection editor. P
 
 ## Model connections
 
-- Default to **OpenAI-compatible (Generic)** (`Chat Completions`) or pick a quick preset (**DeepSeek**, **OpenAI**, **Claude Native**, **Gemini Native**, **OpenAI Responses**) to pre-fill the official endpoint. A different URL does not silently change the selected wire protocol.
+- Default to **OpenAI-compatible** (`Chat Completions`) or pick a protocol preset (**DeepSeek**, **OpenAI**, **Claude**, **Gemini**, **OpenAI Responses**) to pre-fill the official endpoint. A different URL does not silently change the selected wire protocol.
 - Enter your own model ID and API URL. In OpenAI-compatible Chat modes, omitted `https://`, bare hostnames, and version roots such as `/v1` automatically complete to `/v1/chat/completions` (or `/chat/completions`), while explicit custom paths remain unchanged; insecure `http://` URLs are rejected. Gemini accepts a `/models` base URL or a full `:generateContent` URL matching the configured model.
-- **Advanced options** (collapsed by default) control **Reasoning / thinking** (`Auto`, `Omit parameter`, or `Force off` sending `thinking: {type: "disabled"}`), **Max output tokens** (default `8192`), and Claude's optional workspace ID.
+- **Advanced** (collapsed by default) controls **Thinking** (`Auto`, `Default`, or `Off` sending `thinking: {type: "disabled"}`), **Max output tokens** (default `8192`), and Claude's optional workspace ID.
 - Automatic rules match conservative, exact model IDs, not every model name or snapshot. See [the current rule set](common/src/main/java/com/liskovsoft/smartyoutubetv2/common/subtitle/translation/CaptionModelPolicy.java). A requested control or omitted reasoning text is not proof of zero internal reasoning or zero reasoning charges.
 - Existing connections keep their protocol, thinking choice and stored Key. Changing the endpoint, service or workspace requires replacing or explicitly clearing the Key; it is never silently forwarded to a new target.
 

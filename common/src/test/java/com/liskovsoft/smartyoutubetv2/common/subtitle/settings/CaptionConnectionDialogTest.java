@@ -33,6 +33,10 @@ public class CaptionConnectionDialogTest {
         Harness h = new Harness(true);
         try {
             assertEquals("", h.key().getText().toString());
+            assertEquals(h.activity.getString(R.string.caption_ai_key_saved_hint), h.key().getHint().toString());
+            TextView error = h.dialog.findViewById(R.id.caption_ai_error);
+            assertEquals(View.GONE, error.getVisibility());
+            assertEquals("", error.getText().toString());
             assertTrue(h.key().getTransformationMethod() instanceof PasswordTransformationMethod);
             assertFalse(h.key().isSaveEnabled());
             assertTrue((h.dialog.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0);
@@ -86,6 +90,9 @@ public class CaptionConnectionDialogTest {
             h.validFields(); h.key().setText("synthetic key with spaces"); h.ok();
             assertEquals(0, h.calls);
             assertTrue(h.dialog.isShowing());
+            TextView error = h.dialog.findViewById(R.id.caption_ai_error);
+            assertEquals(View.VISIBLE, error.getVisibility());
+            assertEquals(h.activity.getString(R.string.caption_ai_invalid_connection), error.getText().toString());
         } finally { h.close(); }
     }
     @Test public void obsoleteVideoOrProfileShowsThatTheDraftWasNotSubmitted() {

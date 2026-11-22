@@ -33,10 +33,6 @@ import java.util.concurrent.TimeUnit;
 /** Native lifecycle/menu adapter; all persistence and Keystore operations stay on one bounded worker. */
 public class CaptionSettingsController extends BasePlayerController implements AppPrefs.ProfileChangeListener {
     private interface GlobalChange { CaptionPreferences.Global apply(CaptionPreferences.Global before); }
-    private static final int[] BATCH_SIZES = { 4, 6, 8, 12, 16 };
-    private static final int ROW_NONE = 0;
-    private static final int ROW_TARGET = 1;
-    private static final int ROW_BATCH = 2;
     private static final int TITLE_CONTEXT_CODE_POINTS = 200;
     private static final int CHANNEL_CONTEXT_CODE_POINTS = 100;
 
@@ -82,17 +78,14 @@ public class CaptionSettingsController extends BasePlayerController implements A
     private boolean mViewActive;
     private long mViewGeneration;
     private boolean mGlobalUnsaved;
-    private boolean mBatchUnsaved;
     private long mGlobalRevision;
     private int mConnectionSaves;
     private int mGlobalSaves;
-    private int mBatchSaves;
     private boolean mConnectionUnsaved;
     private boolean mLifecycleTraceEnabled;
     private int mLifecycleEvents;
     private Object mMenuToken;
     private UiOptionItem mMenuTarget;
-    private UiOptionItem mMenuBatchSize;
     private UiOptionItem mMenuConnection;
     private MediaItemMetadata mMetadata;
     private String mLatchedVideoContext;
@@ -132,8 +125,8 @@ public class CaptionSettingsController extends BasePlayerController implements A
         trace("profile_changed", null);
         mGlobal = CaptionPreferences.Global.defaults();
         mGlobalRevision++;
-        mConnectionSaves = mGlobalSaves = mBatchSaves = 0;
-        mGlobalUnsaved = mBatchUnsaved = mConnectionUnsaved = false;
+        mConnectionSaves = mGlobalSaves = 0;
+        mGlobalUnsaved = mConnectionUnsaved = false;
         mLatchedVideoContext = null;
         clearMenuRows();
         mChannelWrite = null;
@@ -155,7 +148,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
                 if (mOwner != owner || !owner.active) return;
                 mPreferences = preferences;
                 mConnection = connection;
-                mGlobal = preferences.preferences.global;
+                mGlobal = normalizeGlobal(preferences.preferences.global);
                 trace("profile_loaded", null);
                 drainReadyCallbacks();
                 bindChannel();
@@ -302,7 +295,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
                 }
                 videoContext = mLatchedVideoContext;
             }
-            profile = mConnection.profile(mGlobal.targetLanguage, videoContext, mGlobal.batchSize);
+            profile = mConnection.profile(mGlobal.targetLanguage, videoContext, CaptionPreferences.Global.DEFAULT_BATCH_SIZE);
         }
         bridge.configure(bridge.beginConfiguration(), profile, active, mGlobal.mode, mGlobal.order);
     }
@@ -397,15 +390,14 @@ public class CaptionSettingsController extends BasePlayerController implements A
             });
         })) { mChannelWrite = null; updateMenuRows(); }
     }
-    private void changeGlobal(GlobalChange change) { changeGlobal(change, ROW_TARGET); }
-    private void changeGlobal(GlobalChange change, int row) {
+    private void changeGlobal(GlobalChange change) { changeGlobal(change, true); }
+    private void changeGlobal(GlobalChange change, boolean targetRow) {
         Owner owner = mOwner;
         if (owner == null || mPreferences == null) { message(R.string.caption_ai_loading); return; }
-        CaptionPreferences.Global desired = change.apply(mGlobal);
+        CaptionPreferences.Global desired = normalizeGlobal(change.apply(mGlobal));
         mGlobal = desired;
         long revision = ++mGlobalRevision;
-        if (row == ROW_TARGET) mGlobalSaves++;
-        else if (row == ROW_BATCH) mBatchSaves++;
+        if (targetRow) mGlobalSaves++;
         applyBridge();
         updateMenuRows();
         if (!execute(() -> {
@@ -413,20 +405,18 @@ public class CaptionSettingsController extends BasePlayerController implements A
             CaptionPreferenceStore.Snapshot current = owner.preferences.recoverFailedWrite();
             CaptionPreferenceStore.Snapshot saved = current != null && current.valid ?
                     owner.preferences.updateGlobal(current, new CaptionPreferences.Global(
-                            desired.targetLanguage, desired.mode, desired.order, current.preferences.global.connectionId, desired.batchSize)) : null;
+                            desired.targetLanguage, desired.mode, desired.order, current.preferences.global.connectionId,
+                            CaptionPreferences.Global.DEFAULT_BATCH_SIZE)) : null;
             mUi.post(() -> {
                 if (owner != mOwner || !owner.active) return;
-                if (row == ROW_TARGET) mGlobalSaves--;
-                else if (row == ROW_BATCH) mBatchSaves--;
+                if (targetRow) mGlobalSaves--;
                 if (saved != null) mPreferences = saved;
                 if (revision == mGlobalRevision) {
                     if (saved != null) {
                         mGlobalUnsaved = false;
-                        mBatchUnsaved = false;
-                        mGlobal = saved.preferences.global;
-                    } else {
-                        if (row == ROW_TARGET) mGlobalUnsaved = true;
-                        else if (row == ROW_BATCH) mBatchUnsaved = true;
+                        mGlobal = normalizeGlobal(saved.preferences.global);
+                    } else if (targetRow) {
+                        mGlobalUnsaved = true;
                     }
                     applyBridge();
                 }
@@ -434,10 +424,15 @@ public class CaptionSettingsController extends BasePlayerController implements A
                 if (saved == null) message(R.string.caption_ai_save_failed);
             });
         })) {
-            if (row == ROW_TARGET) { mGlobalSaves--; mGlobalUnsaved = true; }
-            else if (row == ROW_BATCH) { mBatchSaves--; mBatchUnsaved = true; }
+            if (targetRow) { mGlobalSaves--; mGlobalUnsaved = true; }
             updateMenuRows();
         }
+    }
+
+    private static CaptionPreferences.Global normalizeGlobal(CaptionPreferences.Global global) {
+        if (global.batchSize == CaptionPreferences.Global.DEFAULT_BATCH_SIZE) return global;
+        return new CaptionPreferences.Global(global.targetLanguage, global.mode, global.order, global.connectionId,
+                CaptionPreferences.Global.DEFAULT_BATCH_SIZE);
     }
 
     public boolean isReady() {
@@ -526,13 +521,6 @@ public class CaptionSettingsController extends BasePlayerController implements A
         mode(modes, token, R.string.caption_ai_translation_only, NativeCueComposer.Mode.TRANSLATION, mGlobal.order);
         dialog.appendRadioCategory(getContext().getString(R.string.caption_ai_display), modes);
 
-        mMenuBatchSize = (UiOptionItem) UiOptionItem.from(batchSizeTitle(), option -> {
-            if (!globalMenuCurrent(token)) return;
-            if (mPreferences == null || mConnection == null) { message(R.string.caption_ai_loading); return; }
-            showBatchSizeDialog(dialog, token);
-        });
-        dialog.appendSingleButton(mMenuBatchSize);
-
         mMenuConnection = (UiOptionItem) UiOptionItem.from(connectionTitle(), option -> {
             if (!globalMenuCurrent(token)) return;
             if (mPreferences == null || mConnection == null) { message(R.string.caption_ai_loading); return; }
@@ -555,7 +543,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
         String customLabel = dialogContext.getString(R.string.caption_ai_lang_custom);
         if (currentTarget != null && checked < 0) {
             checked = TARGET_CODES.length;
-            customLabel = customLabel + " (" + currentTarget + ")";
+            customLabel = customLabel + " · " + currentTarget;
         }
         int selectedIndex = checked;
         List<OptionItem> options = new ArrayList<>(TARGET_CODES.length + 1);
@@ -565,7 +553,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
                 dialog.goBack();
                 if (!globalMenuCurrent(token)) return;
                 changeGlobal(before -> new CaptionPreferences.Global(
-                        code, before.mode, before.order, before.connectionId, before.batchSize));
+                        code, before.mode, before.order, before.connectionId));
             }, checked == i));
         }
         options.add(UiOptionItem.from(customLabel, option -> {
@@ -576,10 +564,10 @@ public class CaptionSettingsController extends BasePlayerController implements A
                     dialogContext.getString(R.string.caption_ai_lang_custom_hint), initial, raw -> {
                         if (!globalMenuCurrent(token)) return true;
                         String value = raw == null ? "" : raw.trim();
-                        try { new CaptionPreferences.Global(value, mGlobal.mode, mGlobal.order, mGlobal.connectionId, mGlobal.batchSize); }
+                        try { new CaptionPreferences.Global(value, mGlobal.mode, mGlobal.order, mGlobal.connectionId); }
                         catch (IllegalArgumentException ignored) { message(R.string.caption_ai_invalid_language); return false; }
                         changeGlobal(before -> new CaptionPreferences.Global(
-                                value, before.mode, before.order, before.connectionId, before.batchSize));
+                                value, before.mode, before.order, before.connectionId));
                         return true;
                     });
         }, checked == TARGET_CODES.length));
@@ -588,101 +576,30 @@ public class CaptionSettingsController extends BasePlayerController implements A
         dialog.showDialog(title);
     }
 
-    private void showBatchSizeDialog(AppDialogPresenter dialog, Object token) {
-        Context dialogContext = dialog.getContext();
-        int checked = -1;
-        int currentBatch = mGlobal.batchSize;
-        for (int i = 0; i < BATCH_SIZES.length; i++) {
-            if (BATCH_SIZES[i] == currentBatch) { checked = i; break; }
-        }
-        String customLabel = dialogContext.getString(R.string.caption_ai_batch_custom);
-        if (checked < 0) {
-            checked = BATCH_SIZES.length;
-            customLabel = customLabel + " (" + currentBatch + ")";
-        }
-        int selectedIndex = checked;
-        List<OptionItem> options = new ArrayList<>(BATCH_SIZES.length + 1);
-        for (int i = 0; i < BATCH_SIZES.length; i++) {
-            int size = BATCH_SIZES[i];
-            String label = size == CaptionPreferences.Global.DEFAULT_BATCH_SIZE ?
-                    dialogContext.getString(R.string.caption_ai_batch_default, size) : String.valueOf(size);
-            options.add(UiOptionItem.from(label, option -> {
-                dialog.goBack();
-                if (!globalMenuCurrent(token)) return;
-                changeGlobal(before -> new CaptionPreferences.Global(
-                        before.targetLanguage, before.mode, before.order, before.connectionId, size), ROW_BATCH);
-            }, checked == i));
-        }
-        options.add(UiOptionItem.from(customLabel, option -> {
-            dialog.goBack();
-            if (!globalMenuCurrent(token)) return;
-            String initial = selectedIndex == BATCH_SIZES.length ? String.valueOf(currentBatch) : "";
-            SimpleEditDialog.show(dialogContext, dialogContext.getString(R.string.caption_ai_batch_size),
-                    dialogContext.getString(R.string.caption_ai_batch_custom_hint), initial, raw -> {
-                        if (!globalMenuCurrent(token)) return true;
-                        int parsed;
-                        try {
-                            parsed = Integer.parseInt(raw == null ? "" : raw.trim());
-                            new CaptionPreferences.Global(mGlobal.targetLanguage, mGlobal.mode, mGlobal.order, mGlobal.connectionId, parsed);
-                        } catch (RuntimeException ignored) {
-                            message(R.string.caption_ai_invalid_batch_size);
-                            return false;
-                        }
-                        changeGlobal(before -> new CaptionPreferences.Global(
-                                before.targetLanguage, before.mode, before.order, before.connectionId, parsed), ROW_BATCH);
-                        return true;
-                    });
-        }, checked == BATCH_SIZES.length));
-        String title = dialogContext.getString(R.string.caption_ai_batch_size);
-        dialog.appendRadioCategory(title, options);
-        dialog.showDialog(title);
-    }
-
-    private String languageLabel(String code) {
-        if (code == null) return getContext().getString(R.string.caption_ai_not_set);
-        for (int i = 0; i < TARGET_CODES.length; i++) {
-            if (TARGET_CODES[i].equals(code)) return getContext().getString(TARGET_LABELS[i]);
-        }
-        return code;
-    }
-
     private String targetTitle() {
-        String header = getContext().getString(R.string.caption_ai_target) + ": " + languageLabel(mGlobal.targetLanguage);
+        String header = getContext().getString(R.string.caption_ai_target);
         if (mGlobalSaves > 0) return header + "\n" + getContext().getString(R.string.caption_ai_saving);
         if (mGlobalUnsaved) return header + "\n" + getContext().getString(R.string.caption_ai_save_failed);
         return header;
     }
 
-    private String batchSizeTitle() {
-        String header = getContext().getString(R.string.caption_ai_batch_size) + ": " + mGlobal.batchSize;
-        if (mBatchSaves > 0) return header + "\n" + getContext().getString(R.string.caption_ai_saving);
-        if (mBatchUnsaved) return header + "\n" + getContext().getString(R.string.caption_ai_save_failed);
-        return header;
-    }
-
     private String connectionTitle() {
-        CaptionConnection conn = mConnection == null ? null : mConnection.connection;
         String header = getContext().getString(R.string.caption_ai_connection);
-        if (conn != null && conn.wire.model != null && !conn.wire.model.isEmpty()) {
-            header = header + ": " + conn.wire.model;
+        if (mConnectionSaves > 0) return header + "\n" + getContext().getString(R.string.caption_ai_saving);
+        if (mConnectionUnsaved || (mConnection != null && !mConnection.valid)) {
+            return header + "\n" + getContext().getString(R.string.caption_ai_save_failed);
         }
-        int status = mConnectionSaves > 0 ? R.string.caption_ai_saving :
-                mConnection == null ? R.string.caption_ai_loading :
-                mConnectionUnsaved || !mConnection.valid ? R.string.caption_ai_save_failed :
-                !mConnection.hasKey ? R.string.caption_ai_key_missing :
-                mConnection.persistentKey ? R.string.caption_ai_key_saved : R.string.caption_ai_key_memory;
-        return header + "\n" + getContext().getString(status);
+        return header;
     }
 
     private void updateMenuRows() {
         if (mMenuToken == null || !globalMenuCurrent(mMenuToken)) { clearMenuRows(); return; }
         if (mMenuTarget != null) mMenuTarget.setTitle(targetTitle());
-        if (mMenuBatchSize != null) mMenuBatchSize.setTitle(batchSizeTitle());
         if (mMenuConnection != null) mMenuConnection.setTitle(connectionTitle());
     }
     private void clearMenuRows() {
         mMenuToken = null;
-        mMenuTarget = mMenuBatchSize = mMenuConnection = null;
+        mMenuTarget = mMenuConnection = null;
     }
     private boolean standaloneMenuActive() {
         return mMenuToken instanceof MenuToken && !((MenuToken) mMenuToken).requirePlayer && globalMenuCurrent(mMenuToken);
@@ -691,7 +608,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
                       int title, NativeCueComposer.Mode mode, NativeCueComposer.Order order) {
         modes.add(UiOptionItem.from(getContext().getString(title), option -> {
             if (globalMenuCurrent(token)) changeGlobal(before -> new CaptionPreferences.Global(
-                    before.targetLanguage, mode, order, before.connectionId, before.batchSize), ROW_NONE);
+                    before.targetLanguage, mode, order, before.connectionId), false);
         }, mGlobal.mode == mode && (mode != NativeCueComposer.Mode.BILINGUAL || mGlobal.order == order)));
     }
 
@@ -750,7 +667,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
             if (prefs != null && prefs.valid && saved.connection != null && !CaptionConnection.PRIMARY.equals(prefs.preferences.global.connectionId)) {
                 prefs = preferences.updateGlobal(prefs, new CaptionPreferences.Global(prefs.preferences.global.targetLanguage,
                         prefs.preferences.global.mode, prefs.preferences.global.order, CaptionConnection.PRIMARY,
-                        prefs.preferences.global.batchSize));
+                        CaptionPreferences.Global.DEFAULT_BATCH_SIZE));
             }
         } catch (RuntimeException ignored) {
             // Never return exceptions that could contain submitted connection fields or credentials.
@@ -785,7 +702,7 @@ public class CaptionSettingsController extends BasePlayerController implements A
                     if (result.saved) {
                         mPreferences = written.preferences;
                         mGlobal = new CaptionPreferences.Global(mGlobal.targetLanguage, mGlobal.mode, mGlobal.order,
-                                written.preferences.preferences.global.connectionId, mGlobal.batchSize);
+                                written.preferences.preferences.global.connectionId, CaptionPreferences.Global.DEFAULT_BATCH_SIZE);
                         if (result.snapshot.hasKey && !result.snapshot.persistentKey) message(R.string.caption_ai_key_memory);
                     }
                 }

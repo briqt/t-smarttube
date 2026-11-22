@@ -138,7 +138,7 @@ public class CaptionSettingsControllerTest {
             });
             awaitControllerIo(h);
             assertTrue(called[0]);
-            assertEquals("Standalone global settings expose target + batch + connection buttons and display radio category", 3, presenter.buttons.size());
+            assertEquals("Standalone global settings expose target + connection buttons and display radio category", 2, presenter.buttons.size());
             assertEquals(1, presenter.radioCategories.size());
             assertEquals(0, presenter.switches.size());
 
@@ -151,7 +151,8 @@ public class CaptionSettingsControllerTest {
             presenter.lastRadioItems.get(0).onSelect(true);
             awaitControllerIo(h);
             assertEquals(backsBefore + 1, presenter.backCalls);
-            assertTrue(targetButton.getTitle().toString().contains(home.get().getString(R.string.caption_ai_lang_zh_hans)));
+            assertEquals(home.get().getString(R.string.caption_ai_target), targetButton.getTitle().toString());
+            assertEquals("zh-Hans", ((CaptionPreferences.Global) ReflectionHelpers.getField(h, "mGlobal")).targetLanguage);
 
             Object token = ReflectionHelpers.getField(h, "mMenuToken");
             assertTrue((Boolean) ReflectionHelpers.callInstanceMethod(h, "globalMenuCurrent", ReflectionHelpers.ClassParameter.from(Object.class, token)));
@@ -166,8 +167,9 @@ public class CaptionSettingsControllerTest {
             assertEquals(showsBeforeAfterFinish + 1, presenter.dialogShows);
             presenter.lastRadioItems.get(3).onSelect(true);
             awaitControllerIo(h);
-            assertTrue("Standalone row title must still update after background player teardown",
-                    targetButton.getTitle().toString().contains(home.get().getString(R.string.caption_ai_lang_ja)));
+            assertEquals("Standalone target must still save after background player teardown",
+                    "ja", ((CaptionPreferences.Global) ReflectionHelpers.getField(h, "mGlobal")).targetLanguage);
+            assertEquals(home.get().getString(R.string.caption_ai_target), targetButton.getTitle().toString());
 
             h.onProfileChanged();
             assertFalse((Boolean) ReflectionHelpers.callInstanceMethod(h, "globalMenuCurrent", ReflectionHelpers.ClassParameter.from(Object.class, token)));
@@ -228,10 +230,14 @@ public class CaptionSettingsControllerTest {
             customDialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
             awaitControllerIo(h);
             assertFalse(customDialog.isShowing());
-            assertTrue(targetButton.getTitle().toString().endsWith(": pt-BR"));
+            assertEquals(menu.get().getString(R.string.caption_ai_target), targetButton.getTitle().toString());
+            assertEquals("pt-BR", ((CaptionPreferences.Global) ReflectionHelpers.getField(h, "mGlobal")).targetLanguage);
 
             targetButton.onSelect(true);
             assertTrue(presenter.lastRadioItems.get(customIndex).isSelected());
+            String customItemTitle = presenter.lastRadioItems.get(customIndex).getTitle().toString();
+            assertTrue(customItemTitle.contains("pt-BR"));
+            assertFalse(customItemTitle.contains("("));
         } finally {
             h.onFinish();
             menu.pause().stop().destroy();
@@ -285,59 +291,66 @@ public class CaptionSettingsControllerTest {
     @Test public void targetEditorUsesTheNativeMenuActivityNotTheCoveredPlaybackActivity() throws Exception {
         assertEditorOwner(R.string.caption_ai_target);
     }
-    @Test public void batchSizeEditorUsesTheNativeMenuActivityNotTheCoveredPlaybackActivity() throws Exception {
-        assertEditorOwner(R.string.caption_ai_batch_size);
-    }
     @Test public void connectionEditorUsesTheNativeMenuActivityNotTheCoveredPlaybackActivity() throws Exception {
         assertEditorOwner(R.string.caption_ai_connection);
     }
-    @Test public void customBatchSizeOptionValidatesTrimsAndPreselectsOnReopen() throws Exception {
-        ActivityController<Activity> menu = activity();
+    @Test public void hardcodedBatchSizeEightOverridesLegacyStoredValueWithoutExposingMenuEntry() throws Exception {
+        ActivityController<Activity> playback = activity(), menu = activity();
         Harness h = new Harness(false);
-        h.context = menu.get();
+        h.context = playback.get();
+        CaptionOutputBridgeTest.AccountPlayback bridgeOwner = new CaptionOutputBridgeTest.AccountPlayback();
+        h.captionBridge = bridgeOwner.bridge;
         MenuPresenter presenter = new MenuPresenter(menu.get());
+        h.dialogPresenter = presenter;
+        AppPrefs appPrefs = AppPrefs.instance(playback.get());
+        String scope = appPrefs.getProfileScope();
+        CaptionPreferenceStore seedPrefs = new CaptionPreferenceStore(playback.get(), scope, new CaptionPreferenceStore.Limits(32, 65536));
+        CaptionConnectionStore seedConn = new CaptionConnectionStore(playback.get(), scope);
         try {
-            h.whenReady(() -> h.appendGlobalSettings(presenter));
+            CaptionPreferenceStore.Snapshot legacySnap = seedPrefs.updateGlobal(seedPrefs.load(),
+                    new CaptionPreferences.Global("zh-Hans", NativeCueComposer.Mode.BILINGUAL,
+                            NativeCueComposer.Order.ORIGINAL_FIRST, CaptionConnection.PRIMARY, 16));
+            assertNotNull(legacySnap);
+            assertEquals(16, legacySnap.preferences.global.batchSize);
+            assertNotNull(seedPrefs.updateChannel(legacySnap, "synthetic-batch-ch",
+                    new CaptionPreferences.Channel(true, null, CaptionSource.TextKind.UNKNOWN)));
+            assertNotNull(seedConn.save(seedConn.load(), CaptionConnection.basic(
+                    "https://synthetic.invalid/v1/chat/completions", "synthetic-model", 8192, ChatCompletionAdapter.Thinking.AUTO_LOW),
+                    CaptionConnectionStore.KeyEdit.REPLACE, "synthetic-batch-key"));
+
+            h.onInit();
             awaitControllerIo(h);
-            OptionItem batchButton = presenter.buttons.stream()
-                    .filter(item -> item.getTitle().toString().startsWith(menu.get().getString(R.string.caption_ai_batch_size)))
-                    .findFirst().get();
-            String beforeTitle = batchButton.getTitle().toString();
-            for (String invalid : new String[]{"0", "33", "abc"}) {
-                batchButton.onSelect(true);
-                int customIndex = presenter.lastRadioItems.size() - 1;
-                presenter.lastRadioItems.get(customIndex).onSelect(true);
-                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
-                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            Video video = video("synthetic-batch-v");
+            video.channelId = "synthetic-batch-ch";
+            h.onNewVideo(video);
+            h.onSourceChanged(video);
 
-                AlertDialog customDialog = (AlertDialog) ShadowDialog.getLatestDialog();
-                EditText input = customDialog.findViewById(R.id.simple_edit_value);
-                input.setText(invalid);
-                customDialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
-                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
-                assertTrue("Invalid batch size " + invalid + " keeps custom dialog open", customDialog.isShowing());
-                assertEquals(beforeTitle, batchButton.getTitle().toString());
-                customDialog.dismiss();
-            }
+            TranslationCoordinator.Profile profile = ReflectionHelpers.getField(bridgeOwner.bridge, "mTemplate");
+            assertNotNull(profile);
+            assertEquals("zh-Hans", profile.targetLanguage);
+            assertTrue((Boolean) ReflectionHelpers.getField(bridgeOwner.bridge, "mEnabled"));
+            assertEquals("Batch size must be hardcoded to 8 regardless of legacy stored value",
+                    CaptionPreferences.Global.DEFAULT_BATCH_SIZE, profile.batchLimits.items);
+            assertEquals(CaptionPreferences.Global.DEFAULT_BATCH_SIZE,
+                    ((CaptionPreferences.Global) ReflectionHelpers.getField(h, "mGlobal")).batchSize);
 
-            batchButton.onSelect(true);
-            int customIndex = presenter.lastRadioItems.size() - 1;
-            presenter.lastRadioItems.get(customIndex).onSelect(true);
-            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            h.appendMenu(presenter);
+            assertEquals(1, presenter.switches.size());
+            assertEquals(2, presenter.buttons.size());
+            assertEquals(1, presenter.radioCategories.size());
 
-            AlertDialog customDialog = (AlertDialog) ShadowDialog.getLatestDialog();
-            EditText input = customDialog.findViewById(R.id.simple_edit_value);
-            input.setText("  14  ");
-            customDialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+            // Saving another global preference normalizes persisted batchSize back to 8.
+            presenter.buttons.get(0).onSelect(true);
+            presenter.lastRadioItems.get(3).onSelect(true); // ja
             awaitControllerIo(h);
-            assertFalse(customDialog.isShowing());
-            assertTrue(batchButton.getTitle().toString().contains("14"));
-
-            batchButton.onSelect(true);
-            assertTrue(presenter.lastRadioItems.get(customIndex).isSelected());
+            CaptionPreferenceStore.Snapshot updated = seedPrefs.load();
+            assertTrue(updated.valid);
+            assertEquals("ja", updated.preferences.global.targetLanguage);
+            assertEquals(CaptionPreferences.Global.DEFAULT_BATCH_SIZE, updated.preferences.global.batchSize);
+            assertTrue(updated.preferences.channel("synthetic-batch-ch").translate);
         } finally {
-            h.onFinish();
-            menu.pause().stop().destroy();
+            h.onFinish(); bridgeOwner.close(); seedPrefs.close(); seedConn.close();
+            menu.pause().stop().destroy(); playback.pause().stop().destroy();
         }
     }
     @Test public void resolveVideoContextPrefersMetadataTitleWithVideoFallbackAndLatchesOncePerSource() throws Exception {
@@ -424,7 +437,7 @@ public class CaptionSettingsControllerTest {
                     return null;
                 });
     }
-    @Test public void flattenedPlayerMenuShowsFourCleanControlsAndModelSummaryWithoutExposingTheKey() throws Exception {
+    @Test public void flattenedPlayerMenuShowsCleanSingleLineTitlesWithoutBatchSizeOrKeyLeak() throws Exception {
         ActivityController<Activity> playback = activity(), menu = activity();
         Harness h = new Harness();
         h.context = playback.get();
@@ -440,10 +453,11 @@ public class CaptionSettingsControllerTest {
             h.appendMenu(presenter);
             assertEquals("Exactly 1 channel switch", 1, presenter.switches.size());
             assertEquals("Exactly 1 display radio category", 1, presenter.radioCategories.size());
-            assertEquals("Exactly 3 global action rows (target language + batch size + model settings), no status/retry clutter", 3, presenter.buttons.size());
+            assertEquals("Exactly 2 global action rows (target language + AI model), no batch size or status clutter", 2, presenter.buttons.size());
 
-            OptionItem row = presenter.buttons.stream().filter(item -> item.getTitle().toString().startsWith(menu.get().getString(R.string.caption_ai_connection))).findFirst().get();
-            assertTrue("Native singleButton only renders its title", row.getTitle().toString().contains(menu.get().getString(R.string.caption_ai_key_missing)));
+            assertEquals(menu.get().getString(R.string.caption_ai_target), presenter.buttons.get(0).getTitle().toString());
+            OptionItem row = presenter.buttons.get(1);
+            assertEquals(menu.get().getString(R.string.caption_ai_connection), row.getTitle().toString());
             String key = "synthetic-visible-status-not-a-real-key";
             CaptionConnectionStore.Snapshot saved = connection.save(connection.load(), CaptionConnection.basic(
                     "https://synthetic.invalid/v1/chat/completions", "synthetic-model", 1024, ChatCompletionAdapter.Thinking.OMIT), CaptionConnectionStore.KeyEdit.REPLACE, key);
@@ -451,10 +465,10 @@ public class CaptionSettingsControllerTest {
             ReflectionHelpers.setField(h, "mConnection", saved);
             presenter.clearCaptured();
             h.appendMenu(presenter);
-            row = presenter.buttons.stream().filter(item -> item.getTitle().toString().startsWith(menu.get().getString(R.string.caption_ai_connection))).findFirst().get();
-            int status = saved.persistentKey ? R.string.caption_ai_key_saved : R.string.caption_ai_key_memory;
-            assertTrue(row.getTitle().toString().contains("synthetic-model"));
-            assertTrue(row.getTitle().toString().contains(menu.get().getString(status)));
+            row = presenter.buttons.get(1);
+            assertEquals("Model row stays a clean single-line native title when ready",
+                    menu.get().getString(R.string.caption_ai_connection), row.getTitle().toString());
+            assertFalse(row.getTitle().toString().contains("\n"));
             assertFalse(row.getTitle().toString().contains(key));
         } finally {
             h.onFinish(); preferences.close(); connection.close();

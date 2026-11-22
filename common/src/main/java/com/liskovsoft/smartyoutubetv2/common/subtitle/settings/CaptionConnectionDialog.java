@@ -79,7 +79,7 @@ public final class CaptionConnectionDialog {
                 R.id.caption_ai_model, previous == null ? "" : previous.wire.model, InputType.TYPE_CLASS_TEXT, sectionGap);
 
         EditText key = field(dialogContext, fields,
-                hasSavedKey ? R.string.caption_ai_key_saved_label : R.string.caption_ai_key_label,
+                R.string.caption_ai_key_label,
                 hasSavedKey ? R.string.caption_ai_key_saved_hint : R.string.caption_ai_key_hint,
                 R.id.caption_ai_key, "",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS, sectionGap);
@@ -128,10 +128,9 @@ public final class CaptionConnectionDialog {
         workspaceFields.setId(R.id.caption_ai_workspace_fields);
         workspaceFields.setOrientation(LinearLayout.VERTICAL);
         advancedFields.addView(workspaceFields);
-        EditText workspace = field(dialogContext, workspaceFields, R.string.caption_ai_workspace, R.string.caption_ai_workspace,
+        EditText workspace = field(dialogContext, workspaceFields, R.string.caption_ai_workspace, R.string.caption_ai_workspace_hint,
                 R.id.caption_ai_workspace, previous == null || previous.wire.workspaceId == null ? "" : previous.wire.workspaceId,
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS, sectionGap);
-        note(dialogContext, workspaceFields, R.string.caption_ai_workspace_hint, 0);
         workspaceFields.setVisibility(selectedService[0] == CaptionService.CLAUDE ? View.VISIBLE : View.GONE);
         workspace.setEnabled(selectedService[0] == CaptionService.CLAUDE);
 
@@ -151,10 +150,8 @@ public final class CaptionConnectionDialog {
 
         TextView error = note(dialogContext, fields, R.string.caption_ai_connection_notice, sectionGap);
         error.setId(R.id.caption_ai_error);
-        if (!hasSavedKey) {
-            error.setText("");
-            error.setVisibility(View.GONE);
-        }
+        error.setText("");
+        error.setVisibility(View.GONE);
 
         AlertDialog dialog = builder.setTitle(R.string.caption_ai_connection)
                 .setView(scroll).setPositiveButton(android.R.string.ok, null).setNegativeButton(android.R.string.cancel, null)

@@ -3,6 +3,12 @@
 This log covers the enhancement fork. Upstream release history remains available
 in [SmartTube releases](https://github.com/yuliskov/SmartTube/releases).
 
+## 增强修订 16
+
+- 放宽播放器字幕显示最大宽度：将 `#leanback_subtitles` 左右内边距由固定 `150sp` 调整为 `48dp`（标准 Android TV 16:9 画面下约占 90% 屏宽，且不受系统字体缩放放大边距），减少字幕单行空间未满即过早换行的问题，并兼容侧栏菜单缩放与恢复。
+- 重排播放页字幕菜单与主页「设置 → 字幕」布局：原版字幕选项统一位于上方，AI 双语配置统一收拢于下方，消除两类设置项穿插混排。
+- 移除界面中的「单次翻译句数」配置项并在后端固定为 `8`（兼容旧版已保存配置，平滑迁移不丢密钥与语言设置）；全面精简中英文菜单与模型弹窗文案，去除冒号拼接、括号说明与多行状态文字，统一为与原版一致的简洁短标题。
+
 ## 增强修订 15
 
 - 新增受限生产级 TTML（`application/ttml+xml`）原生时间轴解析与通用自动字幕（`kind=asr`）滚动消解，合并渐进累加、换行滑窗及紧邻／重叠词汇回显（位图字幕与顺序容器安全退回原生路径）。

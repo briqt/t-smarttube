@@ -50,13 +50,12 @@ public class CaptionSettingsFeedbackTest {
     @Test public void targetAndSaveStateUpdateTheExistingRowOnlyAfterTheActualAck() throws Exception {
         try (Harness h = new Harness()) {
             h.customTarget("it");
-            assertTrue(h.targetTitle().contains(": it"));
             assertTrue(h.targetTitle().contains(h.text(R.string.caption_ai_saving)));
             assertNull(h.preferences.load().preferences.global.targetLanguage);
             assertEquals(0, h.menu.shows);
             h.work();
             assertEquals("it", h.preferences.load().preferences.global.targetLanguage);
-            assertEquals(h.text(R.string.caption_ai_target) + ": it", h.targetTitle());
+            assertEquals(h.text(R.string.caption_ai_target), h.targetTitle());
             assertEquals(0, h.menu.shows);
         }
     }
@@ -65,14 +64,13 @@ public class CaptionSettingsFeedbackTest {
             h.failCommit = true;
             h.presetTarget(6); // fr
             h.work();
-            assertTrue(h.targetTitle().contains(h.text(R.string.caption_ai_lang_fr)));
             assertTrue(h.targetTitle().contains(h.text(R.string.caption_ai_save_failed)));
             assertFalse(h.preferences.load().valid);
             h.failCommit = false;
             h.presetTarget(6); // Re-selecting recovers last-good and commits 'fr'
             assertTrue(h.targetTitle().contains(h.text(R.string.caption_ai_saving)));
             h.work();
-            assertEquals(h.text(R.string.caption_ai_target) + ": " + h.text(R.string.caption_ai_lang_fr), h.targetTitle());
+            assertEquals(h.text(R.string.caption_ai_target), h.targetTitle());
             assertEquals("fr", h.preferences.load().preferences.global.targetLanguage);
             assertEquals(0, h.menu.shows);
         }
@@ -92,49 +90,9 @@ public class CaptionSettingsFeedbackTest {
             Video next = new Video(); next.videoId = "synthetic-next"; next.channelId = "synthetic-next-channel";
             h.controller.onNewVideo(next);
             h.work();
-            assertEquals(h.text(R.string.caption_ai_target) + ": " + h.text(R.string.caption_ai_lang_ja), h.targetTitle());
+            assertEquals(h.text(R.string.caption_ai_target), h.targetTitle());
             assertEquals(0, h.menu.shows);
             assertEquals("ja", h.preferences.load().preferences.global.targetLanguage);
-        }
-    }
-    @Test public void batchSizeAckFailureAndRecoveryShowOnBatchSizeRowWithoutPoisoningTarget() throws Exception {
-        try (Harness h = new Harness()) {
-            String initialTargetTitle = h.targetTitle();
-            h.failCommit = true;
-            h.customBatchSize("12");
-            assertTrue(h.batchSizeTitle().contains("12"));
-            assertTrue(h.batchSizeTitle().contains(h.text(R.string.caption_ai_saving)));
-            assertEquals(initialTargetTitle, h.targetTitle());
-            h.work();
-            assertTrue(h.batchSizeTitle().contains("12"));
-            assertTrue(h.batchSizeTitle().contains(h.text(R.string.caption_ai_save_failed)));
-            assertFalse(h.preferences.load().valid);
-            assertEquals(initialTargetTitle, h.targetTitle());
-
-            h.failCommit = false;
-            h.customBatchSize("12");
-            assertTrue(h.batchSizeTitle().contains(h.text(R.string.caption_ai_saving)));
-            h.work();
-            assertTrue(h.batchSizeTitle().contains("12"));
-            assertFalse(h.batchSizeTitle().contains(h.text(R.string.caption_ai_saving)));
-            assertFalse(h.batchSizeTitle().contains(h.text(R.string.caption_ai_save_failed)));
-            assertEquals(12, h.preferences.load().preferences.global.batchSize);
-            assertEquals(initialTargetTitle, h.targetTitle());
-            assertEquals(0, h.menu.shows);
-
-            // Fail target commit, then recover via batch size write: both global rows clear failed status.
-            h.failCommit = true;
-            h.presetTarget(3); // ja
-            h.work();
-            assertTrue(h.targetTitle().contains(h.text(R.string.caption_ai_save_failed)));
-            h.failCommit = false;
-            h.customBatchSize("16");
-            h.work();
-            assertFalse("Target failure banner must clear once full global state commits",
-                    h.targetTitle().contains(h.text(R.string.caption_ai_save_failed)));
-            assertFalse(h.batchSizeTitle().contains(h.text(R.string.caption_ai_save_failed)));
-            assertEquals("ja", h.preferences.load().preferences.global.targetLanguage);
-            assertEquals(16, h.preferences.load().preferences.global.batchSize);
         }
     }
     @Test public void globalConnectionCanOpenAndSaveAcrossSourceChangesWhileChannelTokensExpire() throws Exception {
@@ -154,9 +112,9 @@ public class CaptionSettingsFeedbackTest {
             h.work();
             assertFalse(editor.isShowing());
             assertNotNull(h.connection.load().connection);
+            assertEquals("synthetic-model", h.connection.load().connection.wire.model);
             assertFalse(h.connection.load().hasKey);
-            assertTrue(h.connectionTitle().contains("synthetic-model"));
-            assertTrue(h.connectionTitle().contains(h.text(R.string.caption_ai_key_missing)));
+            assertEquals(h.text(R.string.caption_ai_connection), h.connectionTitle());
             assertEquals(0, h.menu.shows);
         }
     }
@@ -210,8 +168,8 @@ public class CaptionSettingsFeedbackTest {
             assertFalse(editor.isShowing());
             CaptionConnectionStore.Snapshot saved = h.connection.load();
             assertTrue(saved.hasKey);
-            assertTrue(h.connectionTitle().contains("synthetic-model"));
-            assertTrue(h.connectionTitle().contains(h.text(saved.persistentKey ? R.string.caption_ai_key_saved : R.string.caption_ai_key_memory)));
+            assertEquals("synthetic-model", saved.connection.wire.model);
+            assertEquals(h.text(R.string.caption_ai_connection), h.connectionTitle());
             assertFalse(h.connectionTitle().contains(KEY));
             assertEquals(0, h.menu.shows);
         }
@@ -225,8 +183,9 @@ public class CaptionSettingsFeedbackTest {
             h.ok(editor);
             assertTrue(editor.isShowing());
             assertTrue(h.worker.pending.isEmpty());
-            assertEquals(h.text(R.string.caption_ai_connection_notice),
-                    ((android.widget.TextView) editor.findViewById(R.id.caption_ai_error)).getText().toString());
+            android.widget.TextView error = editor.findViewById(R.id.caption_ai_error);
+            assertEquals(android.view.View.VISIBLE, error.getVisibility());
+            assertEquals(h.text(R.string.caption_ai_connection_notice), error.getText().toString());
             assertEquals("Existing working connection must remain usable if user cancels", readyTitle, h.connectionTitle());
             assertEquals(original.revision, h.connection.load().revision);
 
@@ -248,8 +207,8 @@ public class CaptionSettingsFeedbackTest {
             h.failCommit = false;
             h.ok(editor); h.work();
             assertFalse(editor.isShowing());
-            assertTrue(h.connectionTitle().contains("synthetic-model-v2"));
-            assertFalse(h.connectionTitle().contains(h.text(R.string.caption_ai_save_failed)));
+            assertEquals("synthetic-model-v2", h.connection.load().connection.wire.model);
+            assertEquals(h.text(R.string.caption_ai_connection), h.connectionTitle());
             assertEquals(0, h.menu.shows);
         }
     }
@@ -347,20 +306,7 @@ public class CaptionSettingsFeedbackTest {
         String text(int id) { return menu.context.getString(id); }
         OptionItem button(int title) { return menu.buttons.stream().filter(item -> item.getTitle().toString().startsWith(text(title))).findFirst().get(); }
         String targetTitle() { return menu.titles.get(button(R.string.caption_ai_target)); }
-        String batchSizeTitle() { return menu.titles.get(button(R.string.caption_ai_batch_size)); }
         String connectionTitle() { return menu.titles.get(button(R.string.caption_ai_connection)); }
-        void customBatchSize(String value) {
-            int showsBefore = menu.shows, backsBefore = menu.backs;
-            button(R.string.caption_ai_batch_size).onSelect(true); drain();
-            assertEquals(showsBefore + 1, menu.shows);
-            int customIndex = menu.lastRadioItems.size() - 1;
-            menu.lastRadioItems.get(customIndex).onSelect(true);
-            drain();
-            assertEquals(backsBefore + 1, menu.backs);
-            menu.shows = 0;
-            AlertDialog dialog = (AlertDialog) ShadowDialog.getLatestDialog();
-            fill(dialog, R.id.simple_edit_value, value); ok(dialog);
-        }
         void drain() { org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle(); }
         void work() { worker.next(); drain(); }
         void presetTarget(int index) {
