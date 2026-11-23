@@ -1,48 +1,30 @@
-# built application files
+# 默认忽略所有 . 开头的文件和目录，需要跟踪的逐个放行
+.*
+!.gitignore
+!/.github/
+!/.gitmodules
+!/.reuse/
+!/exoplayer-amzn-2.10.6/.hgignore
+
+# 个人 Agent 指令不入库
+/AGENTS.md
+
 *.apk
 *.ap_
-
-# files for the dex VM
 *.dex
-
-# Java class files
 *.class
-
-# generated files
 bin/
 gen/
-
-# Local configuration file (sdk path, etc)
 local.properties
-
-# Windows thumbnail db
 Thumbs.db
-
-# OSX files
-.DS_Store
-
-# Eclipse project files
-.classpath
-.project
-
-# Android Studio
-.idea
 *.iml
-
-#.idea/workspace.xml - remove # and delete .idea if it better suit your needs.
-.gradle
-.google
 build/
-
-# my other stuff
 /smartyoutubetv2/release
 /smarttube/release
 /smarttubetv/release
-# gradle 6 fix
 /smarttube/output
 /smarttubetv/output
 /smarttubemobile/release
-# google-services.json
 *.hprof
 log.txt
 android.keystore
@@ -65,19 +47,11 @@ tmp/
 *.new*
 *.tmp
 *.7z
-.DS_Store
 /captures
-.externalNativeBuild
 fabric.properties
 *BAK.java
 hs_err_pid*.log
-
-# Local workspace files
-/.doc/
-/AGENTS.md
 /CLAUDE.md
-
-# Signing material
 *.jks
 *.keystore
 /keystore.properties
