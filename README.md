@@ -51,6 +51,14 @@ Long caption groups can still be crowded, especially in portrait layouts. Source
 Please report the app version, upstream channel, caption language/type, and reproduction steps in [issues](https://github.com/briqt/t-smarttube/issues).
 Remove keys, cookies, signed URLs and other credentials from logs or screenshots. Upstream attribution and licenses remain unchanged.
 
+## Community
+
+[学 AI，上 Linux DO](https://linux.do/)
+
+## License
+
+[MIT](LICENSE)
+
 ---
 
 ## Preserved upstream documentation
